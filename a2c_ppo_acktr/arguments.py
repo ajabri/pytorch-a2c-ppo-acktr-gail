@@ -149,6 +149,15 @@ def get_args():
         action='store_true',
         default=False,
         help='use a linear schedule on the learning rate')
+
+
+    parser.add_argument(
+        '--bonus1',
+        type=float,
+        default=0.0,
+        help='coefficient for bonus reward')
+
+
     args = parser.parse_args()
 
     args.cuda = not args.no_cuda and torch.cuda.is_available()

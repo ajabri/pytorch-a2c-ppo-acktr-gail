@@ -6,6 +6,19 @@ import torch.nn as nn
 
 from a2c_ppo_acktr.envs import VecNormalize
 
+import sys
+import pdb
+
+def info(type, value, tb):
+    if hasattr(sys, 'ps1') or not sys.stderr.isatty():
+        sys.__excepthook__(type, value, tb)
+    else:
+        import traceback, pdb
+        traceback.print_exception(type, value, tb)
+        print
+        pdb.post_mortem(tb) # more "modern"
+sys.excepthook = info
+
 
 # Get a render function
 def get_render_func(venv):
@@ -63,3 +76,4 @@ def cleanup_log_dir(log_dir):
         files = glob.glob(os.path.join(log_dir, '*.monitor.csv'))
         for f in files:
             os.remove(f)
+
