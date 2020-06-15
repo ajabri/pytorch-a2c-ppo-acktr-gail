@@ -306,7 +306,7 @@ class Dynamics(nn.Module):
 
         self.model = nn.Sequential(
             init_(nn.Linear(obs_dim + act_dim, hidden_size)), nn.Tanh(),
-            init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh()
+            # init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh()
         )
     
     def forward(self, x, a):
