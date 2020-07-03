@@ -31,7 +31,7 @@ class PPO():
 
         self.optimizer = optim.Adam(actor_critic.parameters(), lr=lr, eps=eps)
 
-    def update(self, rollouts):
+    def update(self, rollouts, pred_loss=False):
         advantages = rollouts.returns[:-1] - rollouts.value_preds[:-1]
         advantages = (advantages - advantages.mean()) / (
             advantages.std() + 1e-5)
@@ -39,7 +39,7 @@ class PPO():
         value_loss_epoch = 0
         action_loss_epoch = 0
         dist_entropy_epoch = 0
-
+        pred_err_epoch = 0
         for e in range(self.ppo_epoch):
             if self.actor_critic.is_recurrent:
                 data_generator = rollouts.recurrent_generator(
@@ -53,11 +53,8 @@ class PPO():
                    value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, \
                         adv_targ = sample
 
-                # i
-                # import pdb; pdb.set_trace()
-
                 # Reshape to do in a single forward pass for all steps
-                values, action_log_probs, dist_entropy, _ = self.actor_critic.evaluate_actions(
+                values, action_log_probs, dist_entropy, rnn_hxs, all_hxs = self.actor_critic.evaluate_actions(
                     obs_batch, recurrent_hidden_states_batch, masks_batch,
                     actions_batch, info=infos_batch)
 
@@ -78,9 +75,26 @@ class PPO():
                 else:
                     value_loss = 0.5 * (return_batch - values).pow(2).mean()
 
+                total_loss = value_loss * self.value_loss_coef + action_loss - \
+                 dist_entropy * self.entropy_coef
+
+                if pred_loss:
+                    gate, _ = torch.split(infos_batch, 1, dim=-1)
+                    gate = gate.squeeze().bool()
+                    with torch.no_grad():
+                        capts = self.actor_critic.base.cell.capture(obs_batch[gate])
+                    # capts = capts[]                    
+                    all_hxs = all_hxs[gate]
+                    # import pdb; pdb.set_trace()
+
+                    pred_err = torch.nn.functional.mse_loss(all_hxs, capts)
+                    # import pdb; pdb.set_trace()
+                    total_loss += pred_err
+    
+                    pred_err_epoch += pred_err.item()
+
                 self.optimizer.zero_grad()
-                (value_loss * self.value_loss_coef + action_loss -
-                 dist_entropy * self.entropy_coef).backward()
+                total_loss.backward()
                 nn.utils.clip_grad_norm_(self.actor_critic.parameters(),
                                          self.max_grad_norm)
                 self.optimizer.step()
@@ -94,5 +108,6 @@ class PPO():
         value_loss_epoch /= num_updates
         action_loss_epoch /= num_updates
         dist_entropy_epoch /= num_updates
+        pred_err_epoch /= num_updates
 
-        return value_loss_epoch, action_loss_epoch, dist_entropy_epoch
+        return value_loss_epoch, action_loss_epoch, dist_entropy_epoch, pred_err_epoch

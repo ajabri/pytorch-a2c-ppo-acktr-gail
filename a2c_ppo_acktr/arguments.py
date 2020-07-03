@@ -150,13 +150,28 @@ def get_args():
         default=False,
         help='use a linear schedule on the learning rate')
 
-
     parser.add_argument(
         '--bonus1',
         type=float,
         default=0.0,
         help='coefficient for bonus reward')
 
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        default=False,
+        help='debug, skip visualize, pdb on error')
+
+    parser.add_argument(
+        '--partial-obs',
+        action='store_true',
+        default=False,
+        help='debug, skip visualize, pdb on error')
+
+    parser.add_argument(
+        '--gate-input',
+        default='obs',
+        help='obs | hid')
 
     args = parser.parse_args()
 
@@ -166,5 +181,23 @@ def get_args():
     if args.recurrent_policy:
         assert args.algo in ['a2c', 'ppo'], \
             'Recurrent policy is not implemented for ACKTR'
+
+    if args.debug:
+        import sys
+        def info(type, value, tb):
+            if hasattr(sys, 'ps1') or not sys.stderr.isatty():
+            # we are in interactive mode or we don't have a tty-like
+            # device, so we call the default hook
+                sys.__excepthook__(type, value, tb)
+            else:
+                import traceback, pdb
+                # we are NOT in interactive mode, print the exception...
+                traceback.print_exception(type, value, tb)
+                print
+                # ...then start the debugger in post-mortem mode.
+                # pdb.pm() # deprecated
+                pdb.post_mortem(tb) # more "modern"
+
+        sys.excepthook = info
 
     return args

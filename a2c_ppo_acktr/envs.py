@@ -1,6 +1,7 @@
 import os
 
 import gym
+import gym_minigrid
 import numpy as np
 import torch
 from gym.spaces.box import Box
@@ -34,15 +35,28 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets):
         if env_id.startswith("dm"):
             _, domain, task = env_id.split('.')
             env = dm_control2gym.make(domain_name=domain, task_name=task)
-        else:
-            env = gym.make(env_id)
+        elif 'Mini' in env_id:
+            import gym_minigrid
+            env = gym_minigrid.envs.dynamicobstacles.DynamicObstaclesEnv(size=5, n_obstacles=1)
+            # import pdb; pdb.set_trace()
+            # env = gym.make(env_id)
 
         is_atari = hasattr(gym.envs, 'atari') and isinstance(
             env.unwrapped, gym.envs.atari.atari_env.AtariEnv)
         if is_atari:
             env = make_atari(env_id)
+        
+        is_minigrid = 'minigrid' in env_id.lower()
 
         env.seed(seed + rank)
+
+        if is_minigrid:
+            from gym_minigrid.wrappers import ImgObsWrapper, RGBImgObsWrapper, RGBImgPartialObsWrapper, FlatObsWrapper
+            # env = RGBImgPartialObsWrapper(
+            #     env, tile_size=2)
+            # env = ImgObsWrapper(env)
+            env = FlatObsWrapper(env)
+            # env.observation_space = env.observation_space['image']
 
         if str(env.__class__.__name__).find('TimeLimit') >= 0:
             env = TimeLimitMask(env)
@@ -56,6 +70,8 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets):
         if is_atari:
             if len(env.observation_space.shape) == 3:
                 env = wrap_deepmind(env)
+        elif is_minigrid:
+            pass
         elif len(env.observation_space.shape) == 3:
             raise NotImplementedError(
                 "CNN models work only for atari,\n"

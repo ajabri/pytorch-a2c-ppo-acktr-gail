@@ -20,7 +20,7 @@ from a2c_ppo_acktr.storage import RolloutStorage
 from evaluation import evaluate
 
 import wandb
-
+from a2c_ppo_acktr import logging
 
 def main():
     args = get_args()
@@ -37,7 +37,8 @@ def main():
     utils.cleanup_log_dir(log_dir)
     utils.cleanup_log_dir(eval_log_dir)
 
-    wandb.init(project="ops")
+    if not args.debug:
+        wandb.init(project="ops")
 
     torch.set_num_threads(1)
     device = torch.device("cuda:0" if args.cuda else "cpu")
@@ -45,7 +46,7 @@ def main():
     envs = make_vec_envs(args.env_name, args.seed, args.num_processes,
                          args.gamma, args.log_dir, device, False)
 
-    render_func = envs.venv.venv.get_images_single
+    # render_func = envs.venv.venv.get_images_single
     flip,flip1 = False, False
     
     def make_agent(is_leaf=True):
@@ -55,7 +56,12 @@ def main():
             envs.observation_space.shape,
             envs.action_space if is_leaf else gym.spaces.Discrete(2),
             is_leaf=is_leaf,
-            base_kwargs={'recurrent': True})
+            base_kwargs=dict(
+                recurrent=True,
+                partial_obs=args.partial_obs,
+                gate_input=args.gate_input)
+                )
+                
         actor_critic.to(device)
         # wandb.watch(actor_critic.base)
 
@@ -214,19 +220,21 @@ def main():
             rollouts[i].compute_returns(next_value, args.use_gae, args.gamma,
                                     args.gae_lambda, args.use_proper_time_limits)
 
-            value_loss, action_loss, dist_entropy = agent[i].update(rollouts[i])
+            value_loss, action_loss, dist_entropy, pred_err = agent[i].update(rollouts[i],
+                pred_loss=i!=0)
+
             rollouts[i].after_update()
 
-            return value_loss, action_loss, dist_entropy
+            return value_loss, action_loss, dist_entropy, pred_err
         
         if j % 2 == 0 or True:
-            value_loss1, action_loss1, dist_entropy1 = update(0)
+            value_loss1, action_loss1, dist_entropy1, pred_err1 = update(0)
         if (j % 2) == 1 or True:
             _, action1, _, _ = actor_critic[0].act(
                     rollouts[0].obs[-1], rollouts[0].recurrent_hidden_states[-1],
                     rollouts[0].masks[-1])
             
-            value_loss2, action_loss2, dist_entropy2 = update(1,
+            value_loss2, action_loss2, dist_entropy2, pred_err2 = update(1,
                 info=torch.cat([action1, rollouts[1].actions[-1]+1 ], dim=-1))
 
         # value_loss, action_loss, dist_entropy = list(zip((update(i) for i in range(len(agent)))))
@@ -258,27 +266,16 @@ def main():
                         np.median(episode_rewards), np.min(episode_rewards),
                         np.max(episode_rewards),
                         ))
-        
-            wandb.log(dict(
-                median_reward=np.median(episode_rewards), mean_reward=np.mean(episode_rewards),
-                min_reward=np.min(episode_rewards), max_reward=np.max(episode_rewards),
-            ))
+
+            if not args.debug:
+                wandb.log(dict(
+                    median_reward=np.median(episode_rewards), mean_reward=np.mean(episode_rewards),
+                    min_reward=np.min(episode_rewards), max_reward=np.max(episode_rewards),
+                ))
 
 
             if j % 5 == 0:
-                def make_histograms(obs):
-                    x = np.histogram2d(obs[:, 0], obs[:, 1], bins=50, density=True)[0].transpose(1, 0)[::-1]
-                    x = (x-x.min())/ (x-x.min()).max()
-                    v = np.histogram2d(obs[:, 2], obs[:, 3], bins=50, density=True)[0].transpose(1, 0)[::-1]
-                    v = (v-v.min())/ (v-v.min()).max()
-                    
-                    # ang = np.histogram(obs[:, 4], bins=100, density=True) 
-                    # ang_v = np.histogram(obs[:, 5], bins=100, density=True)
-                    
-                    ang = obs[: 4]
-                    ang_v = obs[:, 5]
 
-                    return x, v, ang, ang_v
 
                 data = rollouts[0].obs[:-1]
                 gate = rollouts[0].actions.byte().squeeze()
@@ -289,57 +286,42 @@ def main():
                 # x2, v2, ang2, angv2 = make_histograms(pred.numpy())
 
                 #########################
-                if j%50 == 0:
-                    from sklearn.manifold import TSNE
-                    from matplotlib import pyplot as plt
-                    from matplotlib import cm
+                # if j%50 == 0 and not args.debug:
+                #     from sklearn.manifold import TSNE
+                #     from matplotlib import pyplot as plt
+                #     from matplotlib import cm
 
-                    comb = torch.cat([capt, pred], dim=0)
+                #     comb = torch.cat([capt, pred], dim=0)
 
-                    xx = TSNE(n_components=2).fit_transform(comb)
-                    cc = np.array([0]*capt.shape[0] + [9]*pred.shape[0])
+                #     xx = TSNE(n_components=2).fit_transform(comb)
+                #     cc = np.array([0]*capt.shape[0] + [9]*pred.shape[0])
 
-                    plt.scatter(xx[:, 0], xx[:, 1],
-                        c=cc, cmap=plt.cm.get_cmap("jet", 10),
-                        alpha=0.9, s=50)
-                    wandb.log({
-                        "tsne %s" % j: plt,
-                    })
+                #     plt.scatter(xx[:, 0], xx[:, 1],
+                #         c=cc, cmap=plt.cm.get_cmap("jet", 10),
+                #         alpha=0.9, s=50)
+                #     wandb.log({
+                #         "tsne %s" % j: plt,
+                #     })
                 # plt.colorbar(ticks=range(2))
                 # plt.clim(-0.5, 9.5)
                 #########################
 
-
-                wandb.log({
-                    # "xhist %s" % j: [wandb.Image(cm.jet(_x*255)) for _x in (x1, x2)],
-                    # "vhist %s" % j: [wandb.Image(cm.jet(_v*255)) for _v in (v1, v2)],
-                    "cap x": wandb.Histogram(capt[:, 0]),
-                    "cap y": wandb.Histogram(capt[:, 1]),
-                    "cap vx": wandb.Histogram(capt[:, 2]),
-                    "cap vy": wandb.Histogram(capt[:, 3]),
-
-                    "pred x": wandb.Histogram(pred[:, 0]),
-                    "pred y": wandb.Histogram(pred[:, 1]),
-                    "pred vx": wandb.Histogram(pred[:, 2]),
-                    "pred vy": wandb.Histogram(pred[:, 3]),
-
-                    "cap ang": wandb.Histogram(capt[:, 4]),
-                    "cap ang_v": wandb.Histogram(capt[:, 5]),
-                    "pred ang": wandb.Histogram(pred[:, 4]),
-                    "pred ang_v": wandb.Histogram(pred[:, 5]),
-                })
+                if not args.debug:
+                    # wandb_lunarlander(capt, pred)
+                    logging.wandb_minigrid(capt, pred)
 
 
-            if (j % 2) == 0 or True:
-                wandb.log(dict(ent1=dist_entropy1, val1=value_loss1, aloss1=action_loss1,))
-                print("ent1 {:.4f}, val1 {:.4f}, loss1 {:.4f}\n".format(
-                    dist_entropy1, value_loss1, action_loss1))
-            if (j % 2) == 1 or True:
-                wandb.log(dict(ent2=dist_entropy2, val2=value_loss2, aloss2=action_loss2,))
-                print("ent2 {:.4f}, val2 {:.4f}, loss2 {:.4f}\n".format(
-                    dist_entropy2, value_loss2, action_loss2))
+            if not args.debug:
+                if (j % 2) == 0 or True:
+                    wandb.log(dict(ent1=dist_entropy1, val1=value_loss1, aloss1=action_loss1,))
+                    print("ent1 {:.4f}, val1 {:.4f}, loss1 {:.4f}\n".format(
+                        dist_entropy1, value_loss1, action_loss1))
+                if (j % 2) == 1 or True:
+                    wandb.log(dict(ent2=dist_entropy2, val2=value_loss2, aloss2=action_loss2, prederr2=pred_err2))
+                    print("ent2 {:.4f}, val2 {:.4f}, loss2 {:.4f}, prederr2 {:.4f}\n".format(
+                        dist_entropy2, value_loss2, action_loss2, pred_err2))
 
-            wandb.log(dict(mean_gt=rollouts[0].actions.float().mean().item()))
+                wandb.log(dict(mean_gt=rollouts[0].actions.float().mean().item()))
 
         if (args.eval_interval is not None and len(episode_rewards) > 1
                 and j % args.eval_interval == 0):
