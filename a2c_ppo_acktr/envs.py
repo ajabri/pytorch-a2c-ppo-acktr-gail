@@ -29,34 +29,89 @@ try:
 except ImportError:
     pass
 
+from gym.wrappers import FlattenObservation
 
-def make_env(env_id, seed, rank, log_dir, allow_early_resets):
+# class FullyObsWrapper(RGBImgPartialObsWrapper):
+#     """
+#     Fully observable gridworld using a compact grid encoding
+#     """
+#
+#     def __init__(self, env, tile_size = 8):
+#         super().__init__(env, tile_size = tile_size)
+#
+#     def full_obs(self):
+#         env = self.unwrapped
+#         rgb_img = env.render(
+#             mode='rgb_array',
+#             highlight=False,
+#             tile_size=self.tile_size
+#         )
+#
+#         rgb_img[env.agent_pos[1]][env.agent_pos[0]] = np.array([0, 0, 255])
+#         rgb_img2 = rgb_img.copy()
+#         rgb_img2[env.agent_pos[1]][env.agent_pos[0]] = np.array([255, 0, 0])
+#         # RED: observe
+#         # BLUE: predict
+#         return rgb_img, rgb_img2
+
+class ImgObsWrapper(gym.core.ObservationWrapper):
+    """
+    Use the image as the only observation output, no language/mission.
+    """
+
+    def __init__(self, env):
+        super().__init__(env)
+        self.observation_space = env.observation_space.spaces['image']
+
+    def observation(self, obs):
+        return obs['image']
+
+class FullyObsWrapper(ImgObsWrapper):
+    """
+    Fully observable gridworld using a compact grid encoding
+    """
+
+    def __init__(self, env, tile_size = 8):
+        super().__init__(env)
+        self.tile_size = tile_size
+
+    def full_obs(self):
+        env = self.unwrapped
+        rgb_img = env.render(
+                    mode='rgb_array',
+                    highlight=False,
+                    tile_size=self.tile_size
+                )
+
+        rgb_img[env.agent_pos[1]][env.agent_pos[0]] = np.array([0, 0, 255])
+        rgb_img2 = rgb_img.copy()
+        rgb_img2[env.agent_pos[1]][env.agent_pos[0]] = np.array([255, 0, 0])
+        # RED: observe
+        # BLUE: predict
+        return rgb_img, rgb_img2
+
+
+def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False):
     def _thunk():
         if env_id.startswith("dm"):
             _, domain, task = env_id.split('.')
             env = dm_control2gym.make(domain_name=domain, task_name=task)
-        elif 'Mini' in env_id:
-            import gym_minigrid
-            env = gym_minigrid.envs.dynamicobstacles.DynamicObstaclesEnv(size=5, n_obstacles=1)
-            # import pdb; pdb.set_trace()
-            # env = gym.make(env_id)
+        elif env_id.startswith("MiniGrid"):
+            env = gym.make(env_id)
+            if get_pixel:
+                env = FullyObsWrapper(env, tile_size = 1)
+            else:
+                # env = RGBImgPartialObsWrapper(env, tile_size = 1)
+                env = ImgObsWrapper(env)
 
         is_atari = hasattr(gym.envs, 'atari') and isinstance(
             env.unwrapped, gym.envs.atari.atari_env.AtariEnv)
         if is_atari:
             env = make_atari(env_id)
-        
-        is_minigrid = 'minigrid' in env_id.lower()
+
+        # is_minigrid = 'minigrid' in env_id.lower()
 
         env.seed(seed + rank)
-
-        if is_minigrid:
-            from gym_minigrid.wrappers import ImgObsWrapper, RGBImgObsWrapper, RGBImgPartialObsWrapper, FlatObsWrapper
-            # env = RGBImgPartialObsWrapper(
-            #     env, tile_size=2)
-            # env = ImgObsWrapper(env)
-            env = FlatObsWrapper(env)
-            # env.observation_space = env.observation_space['image']
 
         if str(env.__class__.__name__).find('TimeLimit') >= 0:
             env = TimeLimitMask(env)
@@ -70,8 +125,10 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets):
         if is_atari:
             if len(env.observation_space.shape) == 3:
                 env = wrap_deepmind(env)
-        elif is_minigrid:
-            pass
+        elif env_id.startswith("MiniGrid"):
+            env = FlattenObservation(env)
+            # env = TransposeImage(env, op=[2, 0, 1])
+            return env
         elif len(env.observation_space.shape) == 3:
             raise NotImplementedError(
                 "CNN models work only for atari,\n"
@@ -116,7 +173,7 @@ def make_vec_envs(env_name,
 
     if num_frame_stack is not None:
         envs = VecPyTorchFrameStack(envs, num_frame_stack, device)
-    elif len(envs.observation_space.shape) == 3:
+    elif len(envs.observation_space.shape) == 3 and env_name.startswith("MiniGrid") == False:
         envs = VecPyTorchFrameStack(envs, 4, device)
 
     return envs

@@ -3,7 +3,9 @@ import torch
 
 from a2c_ppo_acktr import utils
 from a2c_ppo_acktr.envs import make_vec_envs
-
+from pdb import set_trace as st
+import cv2
+import imageio
 
 def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
              device):
@@ -46,3 +48,91 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
 
     print(" Evaluation using {} episodes: mean reward {:.5f}\n".format(
         len(eval_episode_rewards), np.mean(eval_episode_rewards)))
+
+
+def act(actor_critic, obs, recurrent_hidden_states, masks, **kwargs):
+    with torch.no_grad():
+        value, action, action_log_prob, recurrent_hidden_states, pred_loss = actor_critic.act(
+            obs, recurrent_hidden_states,
+            masks, **kwargs)
+
+        return value, action, action_log_prob, recurrent_hidden_states, pred_loss
+
+
+def save_gif(actor_critic,
+             env_name,
+             seed,
+             num_processes,
+             device,
+             epoch,
+             bonus1,
+             save_dir = './saved',
+             tile_size = 1):
+    eval_envs = make_vec_envs(env_name, seed + num_processes, num_processes,
+                              None, '', device, True, get_pixel = True)
+
+    eval_episode_rewards = []
+    obs = eval_envs.reset()
+
+    eval_recurrent_hidden_states = torch.zeros(
+        num_processes, actor_critic[0].recurrent_hidden_state_size, device=device)
+    eval_masks = torch.zeros(num_processes, 1, device=device)
+
+    all_paths = [[] for _ in range(num_processes)]
+
+    while len(eval_episode_rewards) < 10:
+        # print(len(eval_episode_rewards))
+        value1, action1, action_log_prob1, recurrent_hidden_states1, _ = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
+
+        # TODO make sure the last index of actions is the right hting to do
+        if len(eval_episode_rewards) == 0:
+            action2 = torch.zeros(action1.shape).long()
+        last_action = 1 + action2
+
+        value2, action2, action_log_prob2, recurrent_hidden_states2, pred_loss = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
+            info=torch.cat([action1, last_action], dim=1))
+
+        action = action2
+        eval_recurrent_hidden_states = recurrent_hidden_states2
+
+        # Obser reward and next obs
+        obs, reward, done, infos = eval_envs.step(action)
+        imgs = np.array(eval_envs.full_obs())
+        gate = action1.byte().squeeze()
+        gate = gate.reshape((-1, 1, 1, 1)).data.numpy()
+        imgs = imgs[:, 0] * gate + imgs[:, 1] * (1-gate)
+
+        for (im, paths) in zip(imgs, all_paths):
+            paths.append(im)
+
+        eval_masks = torch.tensor(
+            [[0.0] if done_ else [1.0] for done_ in done],
+            dtype=torch.float32,
+            device=device)
+
+        for info in infos:
+            if 'episode' in info.keys():
+                eval_episode_rewards.append(info['episode']['r'])
+
+    total = []
+    for i in range(num_processes):
+        total.append(np.array(all_paths[i]))
+    img_list = np.max(all_paths, axis = 1)
+
+    num_processes, H, W, D = img_list.shape
+    num = 4
+    img_list = img_list.reshape((num_processes//num, num, H, W, D))
+    img_list = np.transpose(img_list, (0, 2, 1, 3, 4))
+    img_list = np.clip(img_list.reshape((num*H, num*W, D)), 0, 255)
+
+    total = np.concatenate(total)
+    dir_name = save_dir
+    if os.path.isdir(dir_name) == False:
+        os.makedirs(dir_name)
+    imageio.mimsave(dir_name + '/bouns-' + str(bonus1) + '-epoch-'+ str(epoch) + '-seed-'+ str(seed) + '.gif', total, duration=0.5)
+    # cv2.imwrite(dir_name + '/img.png', img_list)
+    print(".GIF files saved to", dir_name)
+
+
+    eval_envs.close()
+    return img_list
