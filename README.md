@@ -1,6 +1,7 @@
 # pytorch-a2c-ppo-acktr
 partially copied from meta-mb 
 ## Training
+things added: everything in experiment_utils/ and aws.py
 ### Docker
 If not installed yet, [set up](https://docs.docker.com/install/) docker on your machine.
 Pull our docker container ``vioichigo/async`` from docker-hub:
