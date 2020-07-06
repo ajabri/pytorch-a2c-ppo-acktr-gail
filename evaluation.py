@@ -6,6 +6,8 @@ from a2c_ppo_acktr.envs import make_vec_envs
 from pdb import set_trace as st
 import cv2
 import imageio
+import os
+import gym
 
 def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
              device):
@@ -52,12 +54,23 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
 
 def act(actor_critic, obs, recurrent_hidden_states, masks, **kwargs):
     with torch.no_grad():
-        value, action, action_log_prob, recurrent_hidden_states, pred_loss = actor_critic.act(
+        value, action, action_log_prob, recurrent_hidden_states = actor_critic.act(
             obs, recurrent_hidden_states,
             masks, **kwargs)
 
-        return value, action, action_log_prob, recurrent_hidden_states, pred_loss
+        return value, action, action_log_prob, recurrent_hidden_states
 
+# def crop_imgs(imgs, env_name):
+#     env_tmp = gym.make(env_name)
+#     size = env_tmp.maxRoomSize
+#     num = env_tmp.maxNumRooms
+#     # the max dimension of the rooms
+#     max_length = size * num
+#     if max_length < 25 * 8:
+#         for im in imgs:
+#             st()
+#
+#     return imgs
 
 def save_gif(actor_critic,
              env_name,
@@ -79,17 +92,18 @@ def save_gif(actor_critic,
     eval_masks = torch.zeros(num_processes, 1, device=device)
 
     all_paths = [[] for _ in range(num_processes)]
+    all_dones = [[] for _ in range(num_processes)]
 
     while len(eval_episode_rewards) < 10:
         # print(len(eval_episode_rewards))
-        value1, action1, action_log_prob1, recurrent_hidden_states1, _ = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
+        value1, action1, action_log_prob1, recurrent_hidden_states1 = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
 
         # TODO make sure the last index of actions is the right hting to do
         if len(eval_episode_rewards) == 0:
             action2 = torch.zeros(action1.shape).long()
         last_action = 1 + action2
 
-        value2, action2, action_log_prob2, recurrent_hidden_states2, pred_loss = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
+        value2, action2, action_log_prob2, recurrent_hidden_states2 = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
             info=torch.cat([action1, last_action], dim=1))
 
         action = action2
@@ -102,8 +116,10 @@ def save_gif(actor_critic,
         gate = gate.reshape((-1, 1, 1, 1)).data.numpy()
         imgs = imgs[:, 0] * gate + imgs[:, 1] * (1-gate)
 
-        for (im, paths) in zip(imgs, all_paths):
+        for (im, paths, d, dones) in zip(imgs, all_paths, done, all_dones):
             paths.append(im)
+            dones.append(d)
+
 
         eval_masks = torch.tensor(
             [[0.0] if done_ else [1.0] for done_ in done],
@@ -114,10 +130,30 @@ def save_gif(actor_critic,
             if 'episode' in info.keys():
                 eval_episode_rewards.append(info['episode']['r'])
 
+    all_dones = np.array(all_dones)
+    rows, columns = np.where(all_dones == True)
     total = []
+    total_for_img = []
+    """only save num_processes episodes"""
     for i in range(num_processes):
-        total.append(np.array(all_paths[i]))
+        done = columns[i]
+        path = np.array(all_paths[i])
+        path[done:] = 0
+        total_for_img.append(path)
+        total.append(path[:done])
+
+    # TODO: remove this for loop
+    all_paths = np.array(total_for_img)
+    # change the color of the starting point
+    r, g, b = all_paths[:, :, :, :, 0], all_paths[:, :, :, :, 1], all_paths[:, :, :, :, 2]
+    # get all the agent positions
+    indices = np.logical_or(np.logical_and(r!=0, np.logical_and(g==0, b==0)), np.logical_and(b!=0, np.logical_and(g==0, r==0)))
+    # only choose the starting point
+    indices[:, 1:] = False
+    ratio = r[indices].reshape((-1, 1)) + b[indices].reshape((-1, 1))
+    all_paths[indices] += ratio * np.array([0, 1, 0]).astype(all_paths.dtype)
     img_list = np.max(all_paths, axis = 1)
+    # img_list = crop_imgs(img_list, env_name)
 
     num_processes, H, W, D = img_list.shape
     num = 4
@@ -125,14 +161,17 @@ def save_gif(actor_critic,
     img_list = np.transpose(img_list, (0, 2, 1, 3, 4))
     img_list = np.clip(img_list.reshape((num*H, num*W, D)), 0, 255)
 
+    # st()
+    # print([t.shape for t in total])
     total = np.concatenate(total)
     dir_name = save_dir
     if os.path.isdir(dir_name) == False:
         os.makedirs(dir_name)
     imageio.mimsave(dir_name + '/bouns-' + str(bonus1) + '-epoch-'+ str(epoch) + '-seed-'+ str(seed) + '.gif', total, duration=0.5)
+    # if np.sum(columns) != 16 * 39:
     # cv2.imwrite(dir_name + '/img.png', img_list)
+    # print("img saved to", dir_name + '/img.png')
     print(".GIF files saved to", dir_name)
-
 
     eval_envs.close()
     return img_list

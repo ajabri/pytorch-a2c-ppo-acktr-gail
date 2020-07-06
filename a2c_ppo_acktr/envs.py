@@ -5,6 +5,7 @@ import gym_minigrid
 import numpy as np
 import torch
 from gym.spaces.box import Box
+from pdb import set_trace as st
 
 from baselines import bench
 from baselines.common.atari_wrappers import make_atari, wrap_deepmind
@@ -83,9 +84,17 @@ class FullyObsWrapper(ImgObsWrapper):
                     tile_size=self.tile_size
                 )
 
-        rgb_img[env.agent_pos[1]][env.agent_pos[0]] = np.array([0, 0, 255])
-        rgb_img2 = rgb_img.copy()
-        rgb_img2[env.agent_pos[1]][env.agent_pos[0]] = np.array([255, 0, 0])
+        rgb_img2 = rgb_img.copy() #200x200x3
+        r, g, b = rgb_img[:, :, 0], rgb_img[:, :, 1], rgb_img[:, :, 2]
+        indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
+        ratio = r[indices].reshape((-1, 1))
+        rgb_img2[indices] = ratio * np.array([0, 0, 1])
+        # np.array([0, 0, 255])
+        # r, g, b = rgb_img2[indices][:, :, 0], rgb_img2[indices][:, :, 1], rgb_img2[indices][:, :, 2]
+
+        # rgb_img2[indices] = np.concatenate((g, b, r), axis = -1)
+        # rgb_img[self.tile_size * env.agent_pos[1]][self.tile_size * env.agent_pos[0]] = np.array([0, 0, 255])
+        # rgb_img2[self.tile_size * env.agent_pos[1]][self.tile_size * env.agent_pos[0]] = np.array([255, 0, 0])
         # RED: observe
         # BLUE: predict
         return rgb_img, rgb_img2
@@ -99,7 +108,7 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False)
         elif env_id.startswith("MiniGrid"):
             env = gym.make(env_id)
             if get_pixel:
-                env = FullyObsWrapper(env, tile_size = 1)
+                env = FullyObsWrapper(env)
             else:
                 # env = RGBImgPartialObsWrapper(env, tile_size = 1)
                 env = ImgObsWrapper(env)
@@ -152,9 +161,10 @@ def make_vec_envs(env_name,
                   log_dir,
                   device,
                   allow_early_resets,
-                  num_frame_stack=None):
+                  num_frame_stack=None,
+                  get_pixel=False,):
     envs = [
-        make_env(env_name, seed, i, log_dir, allow_early_resets)
+        make_env(env_name, seed, i, log_dir, allow_early_resets, get_pixel=get_pixel)
         for i in range(num_processes)
     ]
 

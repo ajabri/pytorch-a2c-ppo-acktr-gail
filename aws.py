@@ -35,7 +35,7 @@ class ClassEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 INSTANCE_TYPE = 'c4.4xlarge'
-EXP_NAME = 'async/bonus2'
+EXP_NAME = 'async/debug-eval'
 
 def main(**kwargs):
     args = get_args()
@@ -49,17 +49,23 @@ def main(**kwargs):
 
 
 
-    if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
-        torch.backends.cudnn.benchmark = False
-        torch.backends.cudnn.deterministic = True
+    # if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
+    #     torch.backends.cudnn.benchmark = False
+    #     torch.backends.cudnn.deterministic = True
 
-    log_dir = os.path.expanduser(kwargs['log_dir'])
-    eval_log_dir = log_dir + "_eval"
+    # log_dir = os.path.expanduser(kwargs['log_dir'])
+    exp_dir = os.getcwd() + '/data/' + EXP_NAME
+    if os.path.isdir(exp_dir) == False:
+        os.makedirs(exp_dir)
+    json.dump(kwargs, open(exp_dir + '/params.json', 'w'), indent=2, sort_keys=True, cls=ClassEncoder)
+
+    log_dir = exp_dir + '/train'
+    eval_log_dir = exp_dir + '/eval'
     utils.cleanup_log_dir(log_dir)
     utils.cleanup_log_dir(eval_log_dir)
 
     if not kwargs['debug']:
-        wandb.init(project="ops")
+        wandb.init(project=kwargs['proj_name'], config = kwargs)
 
     torch.set_num_threads(1)
     device = torch.device("cuda:0" if kwargs['cuda'] else "cpu")
@@ -171,6 +177,7 @@ def main(**kwargs):
             # Obser reward and next obs
             obs, reward, done, infos = envs.step(action)
 
+            # print(step, infos)
             for info in infos:
                 if 'episode' in info.keys():
                     episode_rewards.append(info['episode']['r'])
@@ -264,11 +271,12 @@ def main(**kwargs):
                     # wandb_lunarlander(capt, pred)
                     logging.wandb_minigrid(capt, pred)
 
-            if j % kwargs['gif_save_interval'] == 0 and not kwargs['debug']:
+            if j % kwargs['gif_save_interval'] == 0:
                 img_list = save_gif(actor_critic, kwargs['env_name'], kwargs['seed'],
-                             kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = log_dir,
+                             kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
                              tile_size = kwargs['tile_size'])
-                wandb.log({"visualization %s" % j: wandb.Image(img_list)})
+                if not kwargs['debug']:
+                    wandb.log({"visualization %s" % j: wandb.Image(img_list)})
 
 
             if not kwargs['debug']:
@@ -294,7 +302,7 @@ if __name__ == "__main__":
     sweep_params = {
         'algo': ['ppo'],
         'seed': [111, 222],
-        'env_name': ['MiniGrid-MultiRoom-N2-S4-v0'],
+        'env_name': ['MiniGrid-MultiRoom-N2-S4-v0', 'MiniGrid-MultiRoom-N3-S4-v0', 'MiniGrid-MultiRoom-N4-S5-v0'],
 
         'use_gae': [True],
         'lr': [2.5e-4],
@@ -306,12 +314,12 @@ if __name__ == "__main__":
         'log_interval': [1],
         'use_linear_lr_decay': [True],
         'entropy_coef': [0.005],
-        'num_env_steps': [5000000],
-        'bonus1': [0],
+        'num_env_steps': [2500000],
+        'bonus1': [0.01, 0.001, 0],
         # 'bonus2': [0],
         'cuda': [False],
-        'proj_name': ['debug'],
-        'gif_save_interval': [25],
+        'proj_name': ['dense-bonus1'],
+        'gif_save_interval': [100],
         'note': [''],
         'tile_size': [1],
         'debug': [True],

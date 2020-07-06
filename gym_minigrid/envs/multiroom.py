@@ -1,17 +1,47 @@
 from gym_minigrid.minigrid import *
 from gym_minigrid.register import register
+from pdb import set_trace as st
+import numpy as np
+
+def manhattan_distance(pos1, pos2):
+    # assume they are tuples
+    return np.sum(np.abs(pos1[0] - pos2[0]) + np.abs(pos1[1] - pos2[1]))
 
 class Room:
     def __init__(self,
         top,
         size,
         entryDoorPos,
-        exitDoorPos
+        exitDoorPos,
+        is_the_last_room = False,
     ):
         self.top = top
         self.size = size
         self.entryDoorPos = entryDoorPos
         self.exitDoorPos = exitDoorPos
+        self.is_the_last_room = is_the_last_room
+
+    def dis_to_sub_goal(self, pos, goal_pos):
+        # In each room, the minimal distance to the exit is just the manhattan
+        # between the current position and the exit
+        if self.is_the_last_room:
+            return manhattan_distance(goal_pos, pos)
+        else:
+            return manhattan_distance(self.exitDoorPos, pos)
+
+    def entry_to_goal(self, goal_pos):
+        if self.is_the_last_room:
+            # assert goal_pos != None
+            return manhattan_distance(self.entryDoorPos, goal_pos)
+        else:
+            return manhattan_distance(self.entryDoorPos, self.exitDoorPos)
+
+    def in_room(self, pos):
+        left, right, top, bottom = self.top[0], self.top[0] + self.size[0], self.top[1], self.top[1] + self.size[1]
+        left_right = (pos[0] >= left and pos[0] <= right)
+        up_down = (pos[1] >= top and pos[1] <= bottom)
+        return (left_right and up_down)
+
 
 class MultiRoomEnv(MiniGridEnv):
     """
@@ -38,6 +68,9 @@ class MultiRoomEnv(MiniGridEnv):
             max_steps=self.maxNumRooms * 20
         )
 
+        # TODO: change this
+        self.reward_range = (-625, 0)
+
     def _gen_grid(self, width, height):
         roomList = []
 
@@ -59,7 +92,7 @@ class MultiRoomEnv(MiniGridEnv):
                 minSz=4,
                 maxSz=self.maxRoomSize,
                 entryDoorWall=2,
-                entryDoorPos=entryDoorPos
+                entryDoorPos=entryDoorPos,
             )
 
             if len(curRoomList) > len(roomList):
@@ -123,7 +156,7 @@ class MultiRoomEnv(MiniGridEnv):
         minSz,
         maxSz,
         entryDoorWall,
-        entryDoorPos
+        entryDoorPos,
     ):
         # Choose the room size randomly
         sizeX = self._rand_int(minSz, maxSz+1)
@@ -177,7 +210,8 @@ class MultiRoomEnv(MiniGridEnv):
             (topX, topY),
             (sizeX, sizeY),
             entryDoorPos,
-            None
+            None,
+            is_the_last_room = (numLeft == 1),
         ))
 
         # If this was the last room, stop
@@ -236,6 +270,96 @@ class MultiRoomEnv(MiniGridEnv):
 
         return True
 
+    def step(self, action):
+        self.step_count += 1
+
+        # reward = 0
+        done = False
+
+        # Get the position in front of the agent
+        fwd_pos = self.front_pos
+
+        # Get the contents of the cell in front of the agent
+        fwd_cell = self.grid.get(*fwd_pos)
+
+        # Rotate left
+        if action == self.actions.left:
+            self.agent_dir -= 1
+            if self.agent_dir < 0:
+                self.agent_dir += 4
+
+        # Rotate right
+        elif action == self.actions.right:
+            self.agent_dir = (self.agent_dir + 1) % 4
+
+        # Move forward
+        elif action == self.actions.forward:
+            if fwd_cell == None or fwd_cell.can_overlap():
+                self.agent_pos = fwd_pos
+            if fwd_cell != None and fwd_cell.type == 'goal':
+                done = True
+                # reward = self._reward()
+            if fwd_cell != None and fwd_cell.type == 'lava':
+                done = True
+
+
+        # Pick up an object
+        elif action == self.actions.pickup:
+            if fwd_cell and fwd_cell.can_pickup():
+                if self.carrying is None:
+                    self.carrying = fwd_cell
+                    self.carrying.cur_pos = np.array([-1, -1])
+                    self.grid.set(*fwd_pos, None)
+
+        # Drop an object
+        elif action == self.actions.drop:
+            if not fwd_cell and self.carrying:
+                self.grid.set(*fwd_pos, self.carrying)
+                self.carrying.cur_pos = fwd_pos
+                self.carrying = None
+
+        # Toggle/activate an object
+        elif action == self.actions.toggle:
+            if fwd_cell:
+                fwd_cell.toggle(self, fwd_pos)
+
+        # Done action (not used by default)
+        elif action == self.actions.done:
+            pass
+
+        else:
+            assert False, "unknown action"
+
+        reward = self._reward()
+        if self.step_count >= self.max_steps:
+            done = True
+
+        obs = self.gen_obs()
+
+        return obs, reward, done, {}
+
+    def _reward(self):
+        """
+        Compute the reward to be given upon success
+        """
+        # msg = ''
+        # for idx, room in enumerate(self.rooms):
+        #     dist = room.entry_to_goal(goal_pos = self.goal_pos)
+        #     msg += (" for room " + str(idx) + ", entry to exit: " + str(dist))
+        dist = 0
+        for idx, room in enumerate(self.rooms):
+            # determine if the agent is in the room
+            agent_in_room = room.in_room(self.agent_pos)
+            if agent_in_room:
+                # msg += (" agent in room " + str(idx+1) + " total number of rooms: " + str(len(self.rooms)))
+                dist += room.dis_to_sub_goal(self.agent_pos, goal_pos = self.goal_pos)
+                for remaining in range(idx+1, len(self.rooms)):
+                    dist += room.entry_to_goal(goal_pos = self.goal_pos)
+                break
+        # msg += " distance: "+ str(dist) + " agent_pos: " + str(self.agent_pos) + " goal_pos: " + str(self.goal_pos)
+        # print(msg)
+        return -dist
+
 class MultiRoomEnvN2S4(MultiRoomEnv):
     def __init__(self):
         super().__init__(
@@ -243,23 +367,6 @@ class MultiRoomEnvN2S4(MultiRoomEnv):
             maxNumRooms=2,
             maxRoomSize=4
         )
-
-class MultiRoomEnvN2S8(MultiRoomEnv):
-    def __init__(self):
-        super().__init__(
-            minNumRooms=2,
-            maxNumRooms=2,
-            maxRoomSize=8
-        )
-
-class MultiRoomEnvN3S8(MultiRoomEnv):
-    def __init__(self):
-        super().__init__(
-            minNumRooms=3,
-            maxNumRooms=3,
-            maxRoomSize=8
-        )
-
 
 
 class MultiRoomEnvN3S4(MultiRoomEnv):
@@ -270,22 +377,7 @@ class MultiRoomEnvN3S4(MultiRoomEnv):
             maxRoomSize=4
         )
 
-class MultiRoomEnvN2S16(MultiRoomEnv):
-    def __init__(self):
-        super().__init__(
-            minNumRooms=2,
-            maxNumRooms=2,
-            maxRoomSize=16
-        )
 
-
-class MultiRoomEnvN4S4(MultiRoomEnv):
-    def __init__(self):
-        super().__init__(
-            minNumRooms=4,
-            maxNumRooms=4,
-            maxRoomSize=4
-        )
 
 class MultiRoomEnvN4S5(MultiRoomEnv):
     def __init__(self):
@@ -295,6 +387,14 @@ class MultiRoomEnvN4S5(MultiRoomEnv):
             maxRoomSize=5
         )
 
+class MultiRoomEnvN6S6(MultiRoomEnv):
+    def __init__(self):
+        super().__init__(
+            minNumRooms=6,
+            maxNumRooms=6,
+            maxRoomSize=6
+        )
+
 class MultiRoomEnvN6(MultiRoomEnv):
     def __init__(self):
         super().__init__(
@@ -302,42 +402,35 @@ class MultiRoomEnvN6(MultiRoomEnv):
             maxNumRooms=6
         )
 
+reward_threshold = 0.
+
 register(
     id='MiniGrid-MultiRoom-N2-S4-v0',
-    entry_point='gym_minigrid.envs:MultiRoomEnvN2S4'
+    entry_point='gym_minigrid.envs:MultiRoomEnvN2S4',
+    reward_threshold = reward_threshold,
 )
 
-register(
-    id='MiniGrid-MultiRoom-N2-S8-v0',
-    entry_point='gym_minigrid.envs:MultiRoomEnvN2S8'
-)
-
-register(
-    id='MiniGrid-MultiRoom-N2-S16-v0',
-    entry_point='gym_minigrid.envs:MultiRoomEnvN2S16'
-)
 
 register(
     id='MiniGrid-MultiRoom-N3-S4-v0',
-    entry_point='gym_minigrid.envs:MultiRoomEnvN3S4'
-)
-
-register(
-    id='MiniGrid-MultiRoom-N3-S8-v0',
-    entry_point='gym_minigrid.envs:MultiRoomEnvN3S8'
-)
-
-register(
-    id='MiniGrid-MultiRoom-N4-S4-v0',
-    entry_point='gym_minigrid.envs:MultiRoomEnvN4S4'
+    entry_point='gym_minigrid.envs:MultiRoomEnvN3S4',
+    reward_threshold = reward_threshold,
 )
 
 register(
     id='MiniGrid-MultiRoom-N4-S5-v0',
-    entry_point='gym_minigrid.envs:MultiRoomEnvN4S5'
+    entry_point='gym_minigrid.envs:MultiRoomEnvN4S5',
+    reward_threshold = reward_threshold,
 )
 
 register(
     id='MiniGrid-MultiRoom-N6-v0',
-    entry_point='gym_minigrid.envs:MultiRoomEnvN6'
+    entry_point='gym_minigrid.envs:MultiRoomEnvN6',
+    reward_threshold = reward_threshold,
+)
+
+register(
+    id='MiniGrid-MultiRoom-N6S6-v0',
+    entry_point='gym_minigrid.envs:MultiRoomEnvN6S6',
+    reward_threshold = reward_threshold,
 )

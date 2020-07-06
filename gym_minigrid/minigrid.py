@@ -5,6 +5,7 @@ import numpy as np
 from gym import error, spaces, utils
 from gym.utils import seeding
 from .rendering import *
+from pdb import set_trace as st
 
 # Size in pixels of a tile in the full-scale human view
 TILE_PIXELS = 32
@@ -811,7 +812,6 @@ class MiniGridEnv(gym.Env):
         """
         Compute the reward to be given upon success
         """
-
         return 1 - 0.9 * (self.step_count / self.max_steps)
 
     def _rand_int(self, low, high):
@@ -1092,12 +1092,15 @@ class MiniGridEnv(gym.Env):
 
         reward = 0
         done = False
+        # print(self.agent_pos, self.goal_pos)
+        # print(self.front_pos)
 
         # Get the position in front of the agent
         fwd_pos = self.front_pos
 
         # Get the contents of the cell in front of the agent
         fwd_cell = self.grid.get(*fwd_pos)
+        # print(fwd_cell)
 
         # Rotate left
         if action == self.actions.left:
