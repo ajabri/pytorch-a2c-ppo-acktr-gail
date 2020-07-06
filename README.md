@@ -67,106 +67,85 @@ Also I'm searching for volunteers to run all experiments on Atari and MuJoCo (wi
 It's extremely difficult to reproduce results for Reinforcement Learning methods. See ["Deep Reinforcement Learning that Matters"](https://arxiv.org/abs/1709.06560) for more information. I tried to reproduce OpenAI results as closely as possible. However, majors differences in performance can be caused even by minor differences in TensorFlow and PyTorch libraries.
 
 ### TODO
-* Improve this README file. Rearrange images.
-* Improve performance of KFAC, see kfac.py for more information
-* Run evaluation for all games and algorithms
-
-## Visualization
-
-In order to visualize the results use ```visualize.ipynb```.
-
 
 ## Training
+### Docker
+If not installed yet, [set up](https://docs.docker.com/install/) docker on your machine.
+Pull our docker container ``vioichigo/async`` from docker-hub:
+```
+docker pull vioichigo/async:latest
+```
+All the necessary dependencies are already installed inside the docker container.
 
-### Atari
-#### A2C
+### Setting up the doodad experiment launcher with EC2 support
 
-```bash
-python main.py --env-name "PongNoFrameskip-v4"
+Install AWS commandline interface
+
+```
+sudo apt-get install awscli
 ```
 
-#### PPO
+and configure the asw cli
 
-```bash
-python main.py --env-name "PongNoFrameskip-v4" --algo ppo --use-gae --lr 2.5e-4 --clip-param 0.1 --value-loss-coef 0.5 --num-processes 8 --num-steps 128 --num-mini-batch 4 --log-interval 1 --use-linear-lr-decay --entropy-coef 0.01
+```
+aws configure
 ```
 
-#### ACKTR
+Clone the doodad repository 
 
-```bash
-python main.py --env-name "PongNoFrameskip-v4" --algo acktr --num-processes 32 --num-steps 20
+```
+git clone https://github.com/jonasrothfuss/doodad.git
 ```
 
-### MuJoCo
+Install the extra package requirements for doodad
+```
+cd doodad && pip install -r requirements.txt
+```
+Modifications: 
+Modify ``cd doodad/scripts/run_experiment_lite_doodad.py``, add ``if __name__ == '__main__'`` before ``fn = doodad.get_args('run_method', failure)`` and ``fn()``:
 
-Please always try to use  ```--use-proper-time-limits``` flag. It properly handles partial trajectories (see https://github.com/sfujim/TD3/blob/master/main.py#L123).
+Configure doodad for your ec2 account. First you have to specify the following environment variables in your ~/.bashrc: 
+AWS_ACCESS_KEY, AWS_ACCESS_KEY, DOODAD_S3_BUCKET
 
-#### A2C
-
-```bash
-python main.py --env-name "Reacher-v2" --num-env-steps 1000000
+Then run
+```
+python scripts/setup_ec2.py
 ```
 
-#### PPO
+Set S3_BUCKET_NAME in experiment_utils/config.py to your bucket name
 
-```bash
-python main.py --env-name "Reacher-v2" --algo ppo --use-gae --log-interval 1 --num-steps 2048 --num-processes 1 --lr 3e-4 --entropy-coef 0 --value-loss-coef 0.5 --ppo-epoch 10 --num-mini-batch 32 --gamma 0.99 --gae-lambda 0.95 --num-env-steps 1000000 --use-linear-lr-decay --use-proper-time-limits
+## Experiments
+
+### How to run experiments 
+examples:
+
+On your own machine:
+```
+python aws.py
+```
+You can change experiment name and hyperparameters in ``aws.py``. 
+On docker:
+```
+python aws.py --mode local_docker
+```
+On aws:
+```
+python aws.py --mode ec2
+```
+To pull results from aws
+```
+python experiment_utils/sync_s3.py experiment_name
+```
+To check all the experiments running on aws
+```
+python experiment_utils/ec2ctl.py jobs
+```
+To kill experiments on aws
+```
+python experiment_utils/ec2ctl.py kill_f the_first_few_characters_of_your_experiment
+```
+OR
+```
+python experiment_utils/ec2ctl.py kill specific_full_name_of_an_experiment
 ```
 
-#### ACKTR
-
-ACKTR requires some modifications to be made specifically for MuJoCo. But at the moment, I want to keep this code as unified as possible. Thus, I'm going for better ways to integrate it into the codebase.
-
-## Enjoy
-
-Load a pretrained model from [my Google Drive](https://drive.google.com/open?id=0Bw49qC_cgohKS3k2OWpyMWdzYkk).
-
-Also pretrained models for other games are available on request. Send me an email or create an issue, and I will upload it.
-
-Disclaimer: I might have used different hyper-parameters to train these models.
-
-### Atari
-
-```bash
-python enjoy.py --load-dir trained_models/a2c --env-name "PongNoFrameskip-v4"
-```
-
-### MuJoCo
-
-```bash
-python enjoy.py --load-dir trained_models/ppo --env-name "Reacher-v2"
-```
-
-## Results
-
-### A2C
-
-![BreakoutNoFrameskip-v4](imgs/a2c_breakout.png)
-
-![SeaquestNoFrameskip-v4](imgs/a2c_seaquest.png)
-
-![QbertNoFrameskip-v4](imgs/a2c_qbert.png)
-
-![beamriderNoFrameskip-v4](imgs/a2c_beamrider.png)
-
-### PPO
-
-
-![BreakoutNoFrameskip-v4](imgs/ppo_halfcheetah.png)
-
-![SeaquestNoFrameskip-v4](imgs/ppo_hopper.png)
-
-![QbertNoFrameskip-v4](imgs/ppo_reacher.png)
-
-![beamriderNoFrameskip-v4](imgs/ppo_walker.png)
-
-
-### ACKTR
-
-![BreakoutNoFrameskip-v4](imgs/acktr_breakout.png)
-
-![SeaquestNoFrameskip-v4](imgs/acktr_seaquest.png)
-
-![QbertNoFrameskip-v4](imgs/acktr_qbert.png)
-
-![beamriderNoFrameskip-v4](imgs/acktr_beamrider.png)
