@@ -129,20 +129,31 @@ def save_gif(actor_critic,
         for info in infos:
             if 'episode' in info.keys():
                 eval_episode_rewards.append(info['episode']['r'])
-
+ 
     all_dones = np.array(all_dones)
     rows, columns = np.where(all_dones == True)
     total = []
+    epi_length = all_dones.shape[1]
     total_for_img = []
-    """only save num_processes episodes"""
-    for i in range(num_processes):
-        done = columns[i]
-        path = np.array(all_paths[i])
-        path[done:] = 0
-        total_for_img.append(path)
-        total.append(path[:done])
+    """only save the episodes that terminate. """
+    # it's possible that there are two or none-dones
+    row_record = []
+    for (r, c) in zip(rows, columns):
+        if r not in row_record:
+            row_record.append(r)
+            path = np.array(all_paths[r])
+            done = c
+            path[done:] = 0
+            total_for_img.append(path)
+            total.append(path[:done+1])
 
-    # TODO: remove this for loop
+    # if len(total_for_img) != num_processes:
+    #     st()
+
+    if len(total_for_img) < num_processes:
+        for _ in range(num_processes - len(total_for_img)):
+            total_for_img.append(np.zeros((epi_length, 200, 200, 3)))
+
     all_paths = np.array(total_for_img)
     # change the color of the starting point
     r, g, b = all_paths[:, :, :, :, 0], all_paths[:, :, :, :, 1], all_paths[:, :, :, :, 2]
@@ -161,7 +172,6 @@ def save_gif(actor_critic,
     img_list = np.transpose(img_list, (0, 2, 1, 3, 4))
     img_list = np.clip(img_list.reshape((num*H, num*W, D)), 0, 255)
 
-    # st()
     # print([t.shape for t in total])
     total = np.concatenate(total)
     dir_name = save_dir

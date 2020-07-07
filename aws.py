@@ -302,7 +302,7 @@ if __name__ == "__main__":
     sweep_params = {
         'algo': ['ppo'],
         'seed': [111, 222],
-        'env_name': ['MiniGrid-MultiRoom-N2-S4-v0', 'MiniGrid-MultiRoom-N3-S4-v0', 'MiniGrid-MultiRoom-N4-S5-v0'],
+        'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
 
         'use_gae': [True],
         'lr': [2.5e-4],
@@ -314,15 +314,15 @@ if __name__ == "__main__":
         'log_interval': [1],
         'use_linear_lr_decay': [True],
         'entropy_coef': [0.005],
-        'num_env_steps': [2500000],
-        'bonus1': [0.01, 0.001, 0],
+        'num_env_steps': [5000000],
+        'bonus1': [0, 0.01, 0.001],
         # 'bonus2': [0],
         'cuda': [False],
-        'proj_name': ['dense-bonus1'],
+        'proj_name': ['dense-debug3'],
         'gif_save_interval': [100],
         'note': [''],
-        'tile_size': [1],
-        'debug': [True],
+        'tile_size': [8],
+        'debug': [False],
         'gate_input': ['hid'], #'obs | hid'
         'partial_obs': [False],
         }
