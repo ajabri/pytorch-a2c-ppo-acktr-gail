@@ -35,7 +35,7 @@ class ClassEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 INSTANCE_TYPE = 'c4.4xlarge'
-EXP_NAME = 'async/debug-eval'
+EXP_NAME = 'async/dense-six-rooms'
 
 def main(**kwargs):
     args = get_args()
@@ -302,7 +302,7 @@ if __name__ == "__main__":
     sweep_params = {
         'algo': ['ppo'],
         'seed': [111, 222],
-        'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
+        'env_name': ['MiniWorld-YMaze-v0'],
 
         'use_gae': [True],
         'lr': [2.5e-4],
@@ -314,15 +314,15 @@ if __name__ == "__main__":
         'log_interval': [1],
         'use_linear_lr_decay': [True],
         'entropy_coef': [0.005],
-        'num_env_steps': [5000000],
-        'bonus1': [0, 0.01, 0.001],
+        'num_env_steps': [50000000],
+        'bonus1': [0.005, 0, 0.01],
         # 'bonus2': [0],
         'cuda': [False],
-        'proj_name': ['dense-debug3'],
-        'gif_save_interval': [100],
+        'proj_name': ['debug'],
+        'gif_save_interval': [60],
         'note': [''],
         'tile_size': [8],
-        'debug': [False],
+        'debug': [True],
         'gate_input': ['hid'], #'obs | hid'
         'partial_obs': [False],
         }

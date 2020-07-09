@@ -97,7 +97,7 @@ class FullyObsWrapper(ImgObsWrapper):
         # rgb_img2[self.tile_size * env.agent_pos[1]][self.tile_size * env.agent_pos[0]] = np.array([255, 0, 0])
         # RED: observe
         # BLUE: predict
-        return rgb_img, rgb_img2
+        return rgb_img2, rgb_img
 
 
 def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False):
