@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from pdb import set_trace as st
 
 
 class PPO():
@@ -78,20 +79,20 @@ class PPO():
                 total_loss = value_loss * self.value_loss_coef + action_loss - \
                  dist_entropy * self.entropy_coef
 
-                if pred_loss:
-                    gate, _ = torch.split(infos_batch, 1, dim=-1)
-                    gate = gate.squeeze().bool()
-                    with torch.no_grad():
-                        capts = self.actor_critic.base.cell.capture(obs_batch[gate])
-                    # capts = capts[]                    
-                    all_hxs = all_hxs[gate]
-                    # import pdb; pdb.set_trace()
-
-                    pred_err = torch.nn.functional.mse_loss(all_hxs, capts)
-                    # import pdb; pdb.set_trace()
-                    total_loss += pred_err
-    
-                    pred_err_epoch += pred_err.item()
+                # if pred_loss:
+                #     gate, _ = torch.split(infos_batch, 1, dim=-1)
+                #     gate = gate.squeeze().bool()
+                #     with torch.no_grad():
+                #         capts = self.actor_critic.base.cell.capture(obs_batch[gate])
+                #     # capts = capts[]
+                #     all_hxs = all_hxs[gate]
+                #     # import pdb; pdb.set_trace()
+                #
+                #     pred_err = torch.nn.functional.mse_loss(all_hxs, capts)
+                #     # import pdb; pdb.set_trace()
+                #     total_loss += pred_err
+                #
+                #     pred_err_epoch += pred_err.item()
 
                 self.optimizer.zero_grad()
                 total_loss.backward()

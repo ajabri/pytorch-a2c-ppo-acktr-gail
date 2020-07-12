@@ -5,6 +5,7 @@ import torch.nn.functional as F
 
 from a2c_ppo_acktr.distributions import Bernoulli, Categorical, DiagGaussian
 from a2c_ppo_acktr.utils import init
+from pdb import set_trace as st
 
 
 class Flatten(nn.Module):
@@ -236,10 +237,8 @@ class Identity(nn.Module):
 
 
 class OpsPolicy(nn.Module):
-    def __init__(self, obs_shape, action_space, is_leaf, base=None, base_kwargs=None):
+    def __init__(self, obs_shape, action_space, is_leaf, base=None, base_kwargs={}):
         super(OpsPolicy, self).__init__()
-        if base_kwargs is None:
-            base_kwargs = {}
 
         self.base = OpsBase(obs_shape[0], action_space, is_leaf=is_leaf, **base_kwargs)
 
@@ -288,6 +287,12 @@ class OpsPolicy(nn.Module):
         return value
 
     def evaluate_actions(self, inputs, rnn_hxs, masks, action, info=None):
+        # (Pdb) inputs.shape
+        # torch.Size([2048, 147])
+        # (Pdb) rnn_hxs.shape
+        # torch.Size([4, 128])
+
+        # actor_features: [2048, 64]
         value, actor_features, rnn_hxs, all_hxs = self.base(inputs, rnn_hxs, masks, info=info)
         dist = self.dist(actor_features)
 
@@ -308,24 +313,35 @@ class Dynamics(nn.Module):
             init_(nn.Linear(obs_dim + act_dim, hidden_size)), nn.Tanh(),
             # init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh()
         )
-    
+
     def forward(self, x, a):
         return self.model(torch.cat([x, a], dim=-1))
 
 
 class OpsCell(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_size=64):
+    def __init__(self, obs_dim, act_dim, hidden_size=64, persistent=False):
         super(OpsCell, self).__init__()
+        self.hidden_size = hidden_size
+        self.persistent = persistent
 
         # observation model
-        self.capture = nn.Sequential(
-            init_(nn.Linear(obs_dim, hidden_size)), nn.Tanh(),
-            init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh()
-        )
-        
-        # forward model
-        self.predict = Dynamics(obs_dim=hidden_size, act_dim=act_dim, hidden_size=hidden_size)
-        
+        if self.persistent:
+            self.capture = nn.Sequential(
+                init_(nn.Linear(obs_dim + hidden_size, hidden_size)), nn.Tanh(),
+                init_(nn.Linear(hidden_size, 2 * hidden_size)), nn.Tanh()
+            )
+            # forward model
+            self.predict = Dynamics(obs_dim=2 * hidden_size, act_dim=act_dim, hidden_size=2 * hidden_size)
+        else:
+            self.capture = nn.Sequential(
+                init_(nn.Linear(obs_dim, hidden_size)), nn.Tanh(),
+                init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh()
+            )
+            # forward model
+            self.predict = Dynamics(obs_dim=hidden_size, act_dim=act_dim, hidden_size=hidden_size)
+
+
+
         for name, param in self.predict.named_parameters():
             if 'bias' in name:
                 nn.init.constant_(param, 0)
@@ -335,27 +351,53 @@ class OpsCell(nn.Module):
     def forward(self, x, h, g, a):
         # B x T x I
         # B x T x H
+        # also keep another hidden state, so make h' = [h, h_persistent]
         T, B, H = x.shape
 
         outs = []
         capt = []
 
+        # h1: short memory
+        # h2: longer memory
+        if self.persistent:
+            h1, h2 = torch.chunk(h, 2, dim = -1)
+
         for t in range(g.shape[0]):
-            z1 = self.capture(x[t])
-            z2 = self.predict(h[0], a[t])
+            # print(x.shape, h2.shape, h.shape)
+            if self.persistent:
+                z1 = self.capture(torch.cat((x[t], h2[0]), dim = -1)) #2 * hidden_size
+                z2 = self.predict(torch.cat((h1[0], h2[0]), dim = -1), a[t]) #2 * hidden_size
 
-            h = (1-g[t]) * z1 + g[t] * z2
-            h = h.unsqueeze(0)
+                z1_1, z1_2 = torch.chunk(z1, 2, dim = -1)
+                z2_1, z2_2 = torch.chunk(z2, 2, dim = -1)
 
-            outs.append(h)
-            capt.append(z1)
-        
+                h1 = (1-g[t]) * z1_1 + g[t] * z2_1
+                h1 = h1.unsqueeze(0)
+
+                h2 = (1-g[t]) * z1_2 + g[t] * z2_2
+                h2 = h2.unsqueeze(0)
+
+                outs.append(h1)
+                capt.append(z1_1)
+
+                h = torch.cat((h1, h2), dim = -1)
+            else:
+                z1 = self.capture(x[t])
+                z2 = self.predict(h[0], a[t])
+
+                h = (1-g[t]) * z1 + g[t] * z2
+                h = h.unsqueeze(0)
+
+                outs.append(h)
+                capt.append(z1)
+
+
         return torch.cat(outs), h, torch.cat(capt)
 
 
 class OpsBase(NNBase):
     def __init__(self, num_inputs, action_space, is_leaf,
-        recurrent=False, hidden_size=64, partial_obs=False, gate_input='obs'):
+        recurrent=False, hidden_size=64, partial_obs=False, gate_input='obs', persistent=False):
         super(OpsBase, self).__init__(recurrent, num_inputs, hidden_size)
 
         # if recurrent:
@@ -367,16 +409,26 @@ class OpsBase(NNBase):
 
         self.is_leaf = is_leaf
         self.gate_input = gate_input
-                               
+        self.hidden_size = hidden_size
+        self.persistent = persistent
+
         if is_leaf:
             self.act_emb = nn.Embedding(action_space.n + 1, hidden_size, padding_idx=0)
-            self.cell = OpsCell(num_inputs, act_dim=hidden_size, hidden_size=hidden_size)
-        
+            self.cell = OpsCell(num_inputs, act_dim=hidden_size, hidden_size=hidden_size, persistent=persistent)
+
         if is_leaf:
             self.actor = nn.Sequential(
                 init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh())
 
             self.critic = nn.Sequential(
+                init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh())
+        elif self.gate_input == 'hid':
+            self.actor = nn.Sequential(
+                init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),
+                init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),)
+
+            self.critic = nn.Sequential(
+                init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),
                 init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh())
         else:
             self.actor = nn.Sequential(
@@ -388,7 +440,7 @@ class OpsBase(NNBase):
                 init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh())
 
         self.critic_linear = init_(nn.Linear(hidden_size, 1))
-        
+
         self.train()
 
     def make_cnn(self, in_dim, out_dim):
@@ -410,7 +462,7 @@ class OpsBase(NNBase):
 
     def forward(self, inputs, rnn_hxs, masks, info=None):
         x = inputs
-        
+
         # import pdb; pdb.set_trace()
         if x.ndim > 3:
             x /= 255
@@ -422,15 +474,23 @@ class OpsBase(NNBase):
             # consider embedding all observations and actions before passing to gru...
             a = self.act_emb(a.squeeze(-1).long())
             x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks, g, a)
+
+            hidden_critic = self.critic(x)
+            hidden_actor = self.actor(x)
         else:
             if self.gate_input == 'hid':
-                x = rnn_hxs
+                if self.persistent:
+                    rnn_hxs, _ = torch.chunk(rnn_hxs, 2, dim = -1)
+                hidden_critic = self.critic(rnn_hxs)
+                hidden_actor = self.actor(rnn_hxs)
             elif not self.gate_input == 'obs':
                 assert False, 'invalid gate iput'
+            else:
+                hidden_critic = self.critic(x)
+                hidden_actor = self.actor(x)
 
-        hidden_critic = self.critic(x)
-        hidden_actor = self.actor(x)
 
+        # [16, 1], [16, 64], [16, 128],
         return self.critic_linear(hidden_critic), hidden_actor, rnn_hxs, x
 
 
@@ -485,11 +545,9 @@ class OpsBase(NNBase):
                 start_idx = has_zeros[i]
                 end_idx = has_zeros[i + 1]
 
-                # import pdb; pdb.set_trace()
-
                 rnn_scores, hxs, capt = self.cell(
                     x[start_idx:end_idx],
-                    hxs * masks[start_idx].view(1, -1, 1), 
+                    hxs * masks[start_idx].view(1, -1, 1),
                     gate[start_idx:end_idx] * masks[start_idx:end_idx, ..., None],
                     action[start_idx:end_idx] * masks[start_idx:end_idx, ..., None],
                     )

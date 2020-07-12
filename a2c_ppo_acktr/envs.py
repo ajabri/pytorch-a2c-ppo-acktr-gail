@@ -2,6 +2,7 @@ import os
 
 import gym
 import gym_minigrid
+# import gym_miniworld
 import numpy as np
 import torch
 from gym.spaces.box import Box
@@ -89,12 +90,6 @@ class FullyObsWrapper(ImgObsWrapper):
         indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
         ratio = r[indices].reshape((-1, 1))
         rgb_img2[indices] = ratio * np.array([0, 0, 1])
-        # np.array([0, 0, 255])
-        # r, g, b = rgb_img2[indices][:, :, 0], rgb_img2[indices][:, :, 1], rgb_img2[indices][:, :, 2]
-
-        # rgb_img2[indices] = np.concatenate((g, b, r), axis = -1)
-        # rgb_img[self.tile_size * env.agent_pos[1]][self.tile_size * env.agent_pos[0]] = np.array([0, 0, 255])
-        # rgb_img2[self.tile_size * env.agent_pos[1]][self.tile_size * env.agent_pos[0]] = np.array([255, 0, 0])
         # RED: observe
         # BLUE: predict
         return rgb_img2, rgb_img
@@ -112,6 +107,8 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False)
             else:
                 # env = RGBImgPartialObsWrapper(env, tile_size = 1)
                 env = ImgObsWrapper(env)
+        else:
+            env = gym.make(env_id)
 
         is_atari = hasattr(gym.envs, 'atari') and isinstance(
             env.unwrapped, gym.envs.atari.atari_env.AtariEnv)

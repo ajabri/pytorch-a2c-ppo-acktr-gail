@@ -65,7 +65,8 @@ class MultiRoomEnv(MiniGridEnv):
 
         super(MultiRoomEnv, self).__init__(
             grid_size=25,
-            max_steps=self.maxNumRooms * 20
+            max_steps=self.maxNumRooms * 20,
+            see_through_walls = True,
         )
 
         # TODO: change this

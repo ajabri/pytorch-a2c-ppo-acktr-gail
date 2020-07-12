@@ -35,7 +35,7 @@ class ClassEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 INSTANCE_TYPE = 'c4.4xlarge'
-EXP_NAME = 'async/dense-six-rooms'
+EXP_NAME = 'async/dense-four-rooms'
 
 def main(**kwargs):
     args = get_args()
@@ -85,8 +85,9 @@ def main(**kwargs):
             is_leaf=is_leaf,
             base_kwargs=dict(
                 recurrent=True,
-                partial_obs=args.partial_obs,
-                gate_input=args.gate_input)
+                partial_obs=kwargs['partial_obs'],
+                gate_input=kwargs['gate_input'],
+                persistent=kwargs['persistent']),
                 )
 
         actor_critic.to(device)
@@ -116,11 +117,16 @@ def main(**kwargs):
             agent = algo.A2C_ACKTR(
                 actor_critic, kwargs['value_loss_coef'], kwargs['entropy_coef'], acktr=True)
 
-        rollouts = RolloutStorage(kwargs['num_steps'], kwargs['num_processes'],
-                                envs.observation_space.shape, envs.action_space,
-                                actor_critic.recurrent_hidden_state_size,
-                                info_size=2 if is_leaf else 0)
-
+        if kwargs['persistent']:
+            rollouts = RolloutStorage(kwargs['num_steps'], kwargs['num_processes'],
+                                    envs.observation_space.shape, envs.action_space,
+                                    actor_critic.recurrent_hidden_state_size * 2,
+                                    info_size=2 if is_leaf else 0)
+        else:
+            rollouts = RolloutStorage(kwargs['num_steps'], kwargs['num_processes'],
+                                    envs.observation_space.shape, envs.action_space,
+                                    actor_critic.recurrent_hidden_state_size,
+                                    info_size=2 if is_leaf else 0)
         return actor_critic, agent, rollouts
 
     root = make_agent(is_leaf=False)
@@ -274,7 +280,7 @@ def main(**kwargs):
             if j % kwargs['gif_save_interval'] == 0:
                 img_list = save_gif(actor_critic, kwargs['env_name'], kwargs['seed'],
                              kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
-                             tile_size = kwargs['tile_size'])
+                             tile_size = kwargs['tile_size'], persistent = kwargs['persistent'])
                 if not kwargs['debug']:
                     wandb.log({"visualization %s" % j: wandb.Image(img_list)})
 
@@ -302,7 +308,7 @@ if __name__ == "__main__":
     sweep_params = {
         'algo': ['ppo'],
         'seed': [111, 222],
-        'env_name': ['MiniWorld-YMaze-v0'],
+        'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
 
         'use_gae': [True],
         'lr': [2.5e-4],
@@ -314,17 +320,18 @@ if __name__ == "__main__":
         'log_interval': [1],
         'use_linear_lr_decay': [True],
         'entropy_coef': [0.005],
-        'num_env_steps': [50000000],
-        'bonus1': [0.005, 0, 0.01],
+        'num_env_steps': [8000000],
+        'bonus1': [0.02, 0.05],
         # 'bonus2': [0],
         'cuda': [False],
-        'proj_name': ['debug'],
-        'gif_save_interval': [60],
-        'note': [''],
+        'proj_name': ['dense-see-through-wall'],
+        'gif_save_interval': [100],
+        'note': ['increase max step'],
         'tile_size': [8],
-        'debug': [True],
-        'gate_input': ['hid'], #'obs | hid'
+        'debug': [False],
+        'gate_input': ['obs'], #'obs' | 'hid'
         'partial_obs': [False],
+        'persistent': [False],
         }
 
     run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)
