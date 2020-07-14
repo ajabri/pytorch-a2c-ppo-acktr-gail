@@ -6,6 +6,6 @@ DOCKER_MOUNT_DIR = '/root/code/data'
 
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 
-DOCKER_IMAGE = 'vioichigo/async:latest2'
+DOCKER_IMAGE = 'vioichigo/async:latest3'
 
 S3_BUCKET_NAME = 'vioichigo'

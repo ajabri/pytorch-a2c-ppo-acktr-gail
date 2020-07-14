@@ -87,13 +87,13 @@ class NNBase(nn.Module):
         self._hidden_size = hidden_size
         self._recurrent = recurrent
 
-        if recurrent:
-            self.gru = nn.GRU(recurrent_input_size, hidden_size)
-            for name, param in self.gru.named_parameters():
-                if 'bias' in name:
-                    nn.init.constant_(param, 0)
-                elif 'weight' in name:
-                    nn.init.orthogonal_(param)
+        # if recurrent:
+        #     self.gru = nn.GRU(recurrent_input_size, hidden_size)
+        #     for name, param in self.gru.named_parameters():
+        #         if 'bias' in name:
+        #             nn.init.constant_(param, 0)
+        #         elif 'weight' in name:
+        #             nn.init.orthogonal_(param)
 
     @property
     def is_recurrent(self):
@@ -240,7 +240,10 @@ class OpsPolicy(nn.Module):
     def __init__(self, obs_shape, action_space, is_leaf, base=None, base_kwargs={}):
         super(OpsPolicy, self).__init__()
 
-        self.base = OpsBase(obs_shape[0], action_space, is_leaf=is_leaf, **base_kwargs)
+        if len(obs_shape) == 3:
+            self.base = OpsBase(obs_shape, action_space, is_leaf=is_leaf, mode='cnn', **base_kwargs)
+        else:
+            self.base = OpsBase(obs_shape[0], action_space, is_leaf=is_leaf, **base_kwargs)
 
         if action_space.__class__.__name__ == "Discrete":
             num_outputs = action_space.n
@@ -397,13 +400,16 @@ class OpsCell(nn.Module):
 
 class OpsBase(NNBase):
     def __init__(self, num_inputs, action_space, is_leaf,
-        recurrent=False, hidden_size=64, partial_obs=False, gate_input='obs', persistent=False):
+                recurrent=False, hidden_size=64, partial_obs=False,
+                gate_input='obs', persistent=False, mode='linear',
+                resolution_scale=1.0):
         super(OpsBase, self).__init__(recurrent, num_inputs, hidden_size)
 
         # if recurrent:
         #     num_inputs = hidden_size
 
-        if partial_obs:
+        # if len(num_inputs) == 3:
+        if mode == 'cnn':
             self.cnn = self.make_cnn(in_dim=num_inputs, out_dim=hidden_size)
             num_inputs = hidden_size
 
@@ -411,6 +417,7 @@ class OpsBase(NNBase):
         self.gate_input = gate_input
         self.hidden_size = hidden_size
         self.persistent = persistent
+        self.resolution_scale = resolution_scale
 
         if is_leaf:
             self.act_emb = nn.Embedding(action_space.n + 1, hidden_size, padding_idx=0)
@@ -444,25 +451,61 @@ class OpsBase(NNBase):
         self.train()
 
     def make_cnn(self, in_dim, out_dim):
-        import kornia
+        # import kornia
         init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
                     constant_(x, 0), nn.init.calculate_gain('relu'))
 
+        C, H, W = in_dim
+        # print(in_dim)
+        # out_shape = (((H - 2 -1) // 2 + 1) - 2 - 2) * (((W - 2 -1) // 2 + 1) - 2 - 2)
+        # out_shape = (((H - 2 -1) // 2 + 1) - 2) * (((W - 2 -1) // 2 + 1) - 2)
+        # # out_shape = (((H - 2 -1) // 2 + 1) ) * (((W - 2 -1) // 2 + 1) )
+        # # print(in_dim, out_dim, out_shape)
+        # encoder = nn.Sequential(
+        #     # kornia.color.Normalize(
+        #     #     mean=torch.Tensor([[0,0,0]]),
+        #     #     std=torch.Tensor([[128, 128, 128]])
+        #     # ),
+        #     init_(nn.Conv2d(in_dim[0], 32, 3, stride=2)), nn.ReLU(),
+        #     # init_(nn.Conv2d(32, 64, 3, stride=1)), nn.ReLU(),
+        #     init_(nn.Conv2d(32, 32, 3, stride=1)), nn.ReLU(),
+        #     # init_(nn.Conv2d(64, 32, 3, stride=1)), nn.ReLU(), Flatten(),
+        #     Flatten(),
+        #     init_(nn.Linear(32 * out_shape, out_dim)), nn.ReLU())
+
+
+        # For 80x60 input
+        # assert np.prod(in_dim[1:]) == 80 * 60
+        out_shape = ((((H-4-1)//2+1-4-1)//2+1)-3-1)//2+1 * ((((W-4-1)//2+1-4-1)//2+1)-3-1)//2+1
+
         encoder = nn.Sequential(
-            # kornia.color.Normalize(
-            #     mean=torch.Tensor([[0,0,0]]),
-            #     std=torch.Tensor([[128, 128, 128]])
-            # ),
-            init_(nn.Conv2d(in_dim, 32, 3, stride=2)), nn.ReLU(),
-            init_(nn.Conv2d(32, 64, 3, stride=1)), nn.ReLU(),
-            init_(nn.Conv2d(64, 32, 3, stride=1)), nn.ReLU(), Flatten(),
-            init_(nn.Linear(32 * 2 * 2, out_dim)), nn.ReLU())
+            init_(nn.Conv2d(in_dim[0], 32, kernel_size=5, stride=2)),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            init_(nn.Conv2d(32, 32, kernel_size=5, stride=2)),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            init_(nn.Conv2d(32, 32, kernel_size=4, stride=2)),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            Flatten(),
+
+            init_(nn.Linear(32 * 7 * 5, out_dim)),
+            nn.ReLU()
+        )
 
         return encoder
 
     def forward(self, inputs, rnn_hxs, masks, info=None):
         x = inputs
-
+        if self.resolution_scale == .5:
+            x = x[:, :, ::2, ::2]
+        elif self.resolution_scale == .25:
+            x = x[:, :, ::4, ::4]
+        # print(x.shape)
         # import pdb; pdb.set_trace()
         if x.ndim > 3:
             x /= 255

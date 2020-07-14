@@ -2,9 +2,9 @@ import os
 
 import gym
 import gym_minigrid
-# import gym_miniworld
 import numpy as np
 import torch
+import cv2
 from gym.spaces.box import Box
 from pdb import set_trace as st
 
@@ -94,6 +94,26 @@ class FullyObsWrapper(ImgObsWrapper):
         # BLUE: predict
         return rgb_img2, rgb_img
 
+# basically doesn't work for some reasons (some functions are missing somewhere)
+# class DownscaleWrapper(gym.ObservationWrapper):
+#     def __init__(self, env=None):
+#         super().__init__(env)
+#         from gym import spaces
+#         self.scale = 0.25
+#         H, W = 60, 80
+#         self.observation_space = spaces.Box(
+#             low=0,
+#             high=255,
+#             shape=(int(H*self.scale), int(W*self.scale), 3),
+#             dtype=np.uint8
+#         )
+        # print(self.observation_space)
+
+    # def observation(self, observation):
+    #     obs = cv2.resize(observation,None,fx=self.scale,fy=self.scale)
+    #     return obs
+        # return observation.transpose(2, 1, 0)
+
 
 def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False):
     def _thunk():
@@ -107,8 +127,49 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False)
             else:
                 # env = RGBImgPartialObsWrapper(env, tile_size = 1)
                 env = ImgObsWrapper(env)
-        else:
-            env = gym.make(env_id)
+        elif env_id.startswith("MiniWorld"):
+            import gym_miniworld
+            from gym_miniworld.miniworld import MiniWorldEnv, Room
+            from gym_miniworld.envs.ymaze import YMaze
+            class YMazeNew(YMaze):
+                def __init__(self):
+                    # super().__init__(obs_height=15, obs_width=20)
+                    # super().__init__(obs_height=30, obs_width=40)
+                    super().__init__()
+
+                # def step(self, action):
+                #     obs, reward, done, info = super().step(action)
+                #
+                #     if self.near(self.box):
+                #         done = True
+                #     reward += self._reward()
+                #
+                #     info['goal_pos'] = self.box.pos
+                #
+                #     return obs, reward, done, info
+                #
+                # def _reward(self):
+                #     """
+                #     Dense reward computation
+                #     """
+                #     return -np.linalg.norm(self.agent.pos - self.box.pos)
+                    # return 1.0 - 0.2 * (self.step_count / self.max_episode_steps)
+
+                def full_obs(self):
+                    """
+                    actually just a change of view, change it in the future"""
+                    obs = env.render_top_view()
+                    obs2 = obs.copy()
+                    r, g, b = obs[:, :, 0], obs[:, :, 1], obs[:, :, 2]
+                    indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
+                    ratio = r[indices].reshape((-1, 1))
+                    obs2[indices] = ratio * np.array([0, 1, 0])
+                    return obs, obs2
+                    # # RED: observe
+                    # # GREEN: predict
+
+            env = YMazeNew()
+
 
         is_atari = hasattr(gym.envs, 'atari') and isinstance(
             env.unwrapped, gym.envs.atari.atari_env.AtariEnv)
@@ -134,6 +195,9 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False)
         elif env_id.startswith("MiniGrid"):
             env = FlattenObservation(env)
             # env = TransposeImage(env, op=[2, 0, 1])
+            return env
+        elif env_id.startswith("MiniWorld"):
+            env = TransposeImage(env, op=[2, 0, 1])
             return env
         elif len(env.observation_space.shape) == 3:
             raise NotImplementedError(
@@ -180,6 +244,7 @@ def make_vec_envs(env_name,
 
     if num_frame_stack is not None:
         envs = VecPyTorchFrameStack(envs, num_frame_stack, device)
+    # For miniworld and minigrid environments, the input dimension is small enough to only use
     elif len(envs.observation_space.shape) == 3 and env_name.startswith("MiniGrid") == False:
         envs = VecPyTorchFrameStack(envs, 4, device)
 

@@ -17,6 +17,7 @@ from a2c_ppo_acktr.arguments import get_args
 from a2c_ppo_acktr.envs import make_vec_envs
 from a2c_ppo_acktr.model import Policy, OpsPolicy
 from a2c_ppo_acktr.storage import RolloutStorage
+import time
 
 import wandb
 from a2c_ppo_acktr import logging
@@ -35,7 +36,7 @@ class ClassEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 INSTANCE_TYPE = 'c4.4xlarge'
-EXP_NAME = 'async/dense-four-rooms'
+EXP_NAME = 'async/debug-y-maze'
 
 def main(**kwargs):
     args = get_args()
@@ -45,9 +46,9 @@ def main(**kwargs):
             kwargs[arg] = getattr(args, arg)
 
     torch.manual_seed(kwargs['seed'])
-    torch.cuda.manual_seed_all(kwargs['seed'])
-
-
+    if kwargs['cuda']:
+        torch.cuda.manual_seed_all(kwargs['seed'])
+    device = torch.device("cuda:0" if kwargs['cuda'] else "cpu")
 
     # if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
     #     torch.backends.cudnn.benchmark = False
@@ -68,10 +69,8 @@ def main(**kwargs):
         wandb.init(project=kwargs['proj_name'], config = kwargs)
 
     torch.set_num_threads(1)
-    device = torch.device("cuda:0" if kwargs['cuda'] else "cpu")
-
     envs = make_vec_envs(kwargs['env_name'], kwargs['seed'], kwargs['num_processes'],
-                         kwargs['gamma'], kwargs['log_dir'], device, False)
+                         kwargs['gamma'], log_dir, device, False)
 
     # render_func = envs.venv.venv.get_images_single
     flip,flip1 = False, False
@@ -79,14 +78,19 @@ def main(**kwargs):
     def make_agent(is_leaf=True):
         ## AGENT CONSTRUCTION:
         ## Modularize this and allow for cascading (obs dim for child policy should be cat of obs and parents output)
+        scaled_obs_shape = envs.observation_space.shape
+        if kwargs['env_name'].startswith("MiniWorld"):
+            C, H, W = scaled_obs_shape
+            scaled_obs_shape = [C, int(H * kwargs['scale']), int(W * kwargs['scale'])]
         actor_critic = OpsPolicy(
-            envs.observation_space.shape,
+            scaled_obs_shape,
             envs.action_space if is_leaf else gym.spaces.Discrete(2),
             is_leaf=is_leaf,
             base_kwargs=dict(
                 recurrent=True,
                 partial_obs=kwargs['partial_obs'],
                 gate_input=kwargs['gate_input'],
+                resolution_scale=kwargs['scale'],
                 persistent=kwargs['persistent']),
                 )
 
@@ -117,6 +121,8 @@ def main(**kwargs):
             agent = algo.A2C_ACKTR(
                 actor_critic, kwargs['value_loss_coef'], kwargs['entropy_coef'], acktr=True)
 
+
+
         if kwargs['persistent']:
             rollouts = RolloutStorage(kwargs['num_steps'], kwargs['num_processes'],
                                     envs.observation_space.shape, envs.action_space,
@@ -127,12 +133,16 @@ def main(**kwargs):
                                     envs.observation_space.shape, envs.action_space,
                                     actor_critic.recurrent_hidden_state_size,
                                     info_size=2 if is_leaf else 0)
+
+        actor_critic.to(device)
+        rollouts.to(device)
         return actor_critic, agent, rollouts
 
     root = make_agent(is_leaf=False)
     leaf = make_agent(is_leaf=True)
     actor_critic, agent, rollouts = list(zip(root, leaf))
 
+    time_start = time.time()
     obs = envs.reset()
     for r in rollouts:
         r.obs[0].copy_(obs)
@@ -190,10 +200,10 @@ def main(**kwargs):
 
             # If done then clean the history of observations.
             masks = torch.FloatTensor(
-                [[0.0] if done_ else [1.0] for done_ in done])
+                [[0.0] if done_ else [1.0] for done_ in done]).to(device)
             bad_masks = torch.FloatTensor(
                 [[0.0] if 'bad_transition' in info.keys() else [1.0]
-                 for info in infos])
+                 for info in infos]).to(device)
 
             int_rew = action1 * kwargs['bonus1']
 
@@ -251,19 +261,22 @@ def main(**kwargs):
             total_num_steps = (j + 1) * kwargs['num_processes'] * kwargs['num_steps']
             end = time.time()
             print(
-                "Updates {}, num timesteps {}, FPS {} \n Last {} training episodes: mean/median reward {:.1f}/{:.1f}, min/max reward {:.1f}/{:.1f}"
-                .format(j, total_num_steps,
+                "Updates {}/{}, num timesteps {}, FPS {} \n Last {} training episodes: mean/median reward {:.1f}/{:.1f}, min/max reward {:.1f}/{:.1f}"
+                .format(j, num_updates, total_num_steps,
                         int(total_num_steps / (end - start)),
                         len(episode_rewards), np.mean(episode_rewards),
                         np.median(episode_rewards), np.min(episode_rewards),
                         np.max(episode_rewards),
                         ))
+            print('update_time:', time.time()-time_start)
 
             if not kwargs['debug']:
                 wandb.log(dict(
                     median_reward=np.median(episode_rewards), mean_reward=np.mean(episode_rewards),
                     min_reward=np.min(episode_rewards), max_reward=np.max(episode_rewards),
+                    update_time=time.time()-time_start,
                 ))
+            time_start = time.time()
 
 
             if j % 5 == 0:
@@ -273,7 +286,7 @@ def main(**kwargs):
                 capt = data[1 - gate]
                 pred = data[gate]
 
-                if not kwargs['debug']:
+                if not kwargs['debug'] and kwargs['env_name'].startswith("MiniGrid"):
                     # wandb_lunarlander(capt, pred)
                     logging.wandb_minigrid(capt, pred)
 
@@ -308,30 +321,40 @@ if __name__ == "__main__":
     sweep_params = {
         'algo': ['ppo'],
         'seed': [111, 222],
-        'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
+        'env_name': ['MiniWorld-YMaze-v0'],
+        # 'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
 
         'use_gae': [True],
-        'lr': [2.5e-4],
-        'clip_param': [0.1],
+        # 'lr': [2.5e-4],
+        'lr': [0.00005],
+        # 'clip_param': [0.1],
+        'clip_param': [0.2],
         'value_loss_coef': [0.5],
         'num_processes': [16],
-        'num_steps': [512],
+        # 'num_steps': [512],
+        'num_steps': [80],
         'num_mini_batch': [4],
         'log_interval': [1],
         'use_linear_lr_decay': [True],
-        'entropy_coef': [0.005],
-        'num_env_steps': [8000000],
-        'bonus1': [0.02, 0.05],
+        # 'entropy_coef': [0.005],
+        'entropy_coef': [1e-2],
+        # 'num_env_steps': [20000000],
+        'num_env_steps': [50000000],
+        'bonus1': [0, 0.02],
         # 'bonus2': [0],
         'cuda': [False],
-        'proj_name': ['dense-see-through-wall'],
+        'proj_name': ['debug-y-maze'],
         'gif_save_interval': [100],
-        'note': ['increase max step'],
+        'note': ['stack'],
         'tile_size': [8],
         'debug': [False],
         'gate_input': ['obs'], #'obs' | 'hid'
         'partial_obs': [False],
         'persistent': [False],
+        'scale': [1],
         }
 
     run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)
+
+    # python aws.py --mode local_docker --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python'
+    # python aws.py --mode ec2 --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python'

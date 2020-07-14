@@ -33,6 +33,9 @@ def run_sweep(run_experiment, sweep_params, exp_name, instance_type='c4.xlarge')
     parser.add_argument('--num_cpu', '-c', type=int, default=multiprocessing.cpu_count(),
                         help='Number of threads to use for running experiments')
 
+    parser.add_argument('--python_cmd', type=str, default="python",
+                        help='python coomand')
+
     args = parser.parse_args(sys.argv[1:])
 
     local_mount = mount.MountLocal(local_dir=config.BASE_DIR, pythonpath=True)
@@ -51,13 +54,14 @@ def run_sweep(run_experiment, sweep_params, exp_name, instance_type='c4.xlarge')
         if query_yes_no("Continue?"):
             sweeper.run_sweep_ec2(run_experiment, sweep_params, bucket_name=config.S3_BUCKET_NAME,
                                   instance_type=instance_type,
-                                  region='us-west-1', s3_log_name=exp_name, add_date_to_logname=False)
+                                  region='us-west-1', s3_log_name=exp_name, add_date_to_logname=False,
+                                  python_cmd=args.python_cmd)
 
     elif args.mode == 'local_docker':
         mode_docker = dd.mode.LocalDocker(
             image=sweeper.image,
         )
-        run_sweep_doodad(run_experiment, sweep_params, run_mode=mode_docker,
+        run_sweep_doodad(run_experiment, sweep_params, run_mode=mode_docker, python_cmd=args.python_cmd,
                          mounts=sweeper.mounts)
 
     elif args.mode == 'local':
