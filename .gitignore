@@ -18,7 +18,6 @@ downloads/
 wandb/
 eggs/
 bin/
-doodad/
 *.csv
 share/
 lib64/
