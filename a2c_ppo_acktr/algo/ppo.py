@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from pdb import set_trace as st
 
 
 class PPO():
@@ -78,20 +79,34 @@ class PPO():
                 total_loss = value_loss * self.value_loss_coef + action_loss - \
                  dist_entropy * self.entropy_coef
 
-                # if pred_loss:
-                #     gate, _ = torch.split(infos_batch, 1, dim=-1)
-                #     gate = gate.squeeze().bool()
-                #     with torch.no_grad():
-                #         capts = self.actor_critic.base.cell.capture(obs_batch[gate])
-                #     # capts = capts[]
-                #     all_hxs = all_hxs[gate]
-                #     # import pdb; pdb.set_trace()
-                #
-                #     pred_err = torch.nn.functional.mse_loss(all_hxs, capts)
-                #     # import pdb; pdb.set_trace()
-                #     total_loss += pred_err
-                #
-                #     pred_err_epoch += pred_err.item()
+                if pred_loss:
+                    gate, _ = torch.split(infos_batch, 1, dim=-1)
+                    gate = gate.squeeze().bool()
+
+                    with torch.no_grad():
+                        # currenlt only works for non-perminant memory
+                        if obs_batch.ndim > 3:
+                            obs_batch = obs_batch/255
+                            obs_batch = self.actor_critic.base.cnn(obs_batch)
+                        if self.actor_critic.base.persistent:
+                            # torch.Size([1026, 128]) torch.Size([128])
+                            # TODO: fix it
+                            return 
+                            h1, h2 = torch.chunk(rnn_hxs, 2, dim = -1)
+                            print(obs_batch[gate].shape, h2[0].shape)
+                            capts = self.actor_critic.base.cell.capture(torch.cat((obs_batch[gate], h2[0]), dim = -1))
+                        else:
+                            capts = self.actor_critic.base.cell.capture(obs_batch[gate])
+
+                    # capts = capts[]
+                    all_hxs = all_hxs[gate]
+                    # import pdb; pdb.set_trace()
+
+                    pred_err = torch.nn.functional.mse_loss(all_hxs, capts)
+                    # import pdb; pdb.set_trace()
+                    total_loss += pred_err
+
+                    pred_err_epoch += pred_err.item()
 
                 self.optimizer.zero_grad()
                 total_loss.backward()

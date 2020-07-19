@@ -115,7 +115,7 @@ class FullyObsWrapper(ImgObsWrapper):
         # return observation.transpose(2, 1, 0)
 
 
-def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False):
+def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False, resolution_scale = 1.):
     def _thunk():
         if env_id.startswith("dm"):
             _, domain, task = env_id.split('.')
@@ -134,8 +134,10 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False)
             class YMazeNew(YMaze):
                 def __init__(self):
                     # super().__init__(obs_height=15, obs_width=20)
-                    # super().__init__(obs_height=30, obs_width=40)
-                    super().__init__()
+                    if resolution_scale == .5:
+                        super().__init__(obs_height=30, obs_width=40)
+                    else:
+                        super().__init__()
 
                 # def step(self, action):
                 #     obs, reward, done, info = super().step(action)
@@ -162,13 +164,17 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False)
                     obs2 = obs.copy()
                     r, g, b = obs[:, :, 0], obs[:, :, 1], obs[:, :, 2]
                     indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
-                    ratio = r[indices].reshape((-1, 1))
-                    obs2[indices] = ratio * np.array([0, 1, 0])
-                    return obs, obs2
+                    # ratio = r[indices].reshape((-1, 1))
+                    ratio = 255
+                    obs2[indices] = ratio * np.array([0, 0, 1])
+                    obs[indices] = ratio * np.array([1, 0, 0])
+                    return obs2, obs
                     # # RED: observe
                     # # GREEN: predict
 
             env = YMazeNew()
+        else:
+            env = gym.make(env_id)
 
 
         is_atari = hasattr(gym.envs, 'atari') and isinstance(
@@ -200,10 +206,12 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False)
             env = TransposeImage(env, op=[2, 0, 1])
             return env
         elif len(env.observation_space.shape) == 3:
-            raise NotImplementedError(
-                "CNN models work only for atari,\n"
-                "please use a custom wrapper for a custom pixel input env.\n"
-                "See wrap_deepmind for an example.")
+            env = TransposeImage(env, op=[2, 0, 1])
+            return env
+            # raise NotImplementedError(
+            #     "CNN models work only for atari,\n"
+            #     "please use a custom wrapper for a custom pixel input env.\n"
+            #     "See wrap_deepmind for an example.")
 
         # If the input has shape (W,H,3), wrap for PyTorch convolutions
         obs_shape = env.observation_space.shape
@@ -223,9 +231,10 @@ def make_vec_envs(env_name,
                   device,
                   allow_early_resets,
                   num_frame_stack=None,
-                  get_pixel=False,):
+                  get_pixel=False,
+                  resolution_scale=1.):
     envs = [
-        make_env(env_name, seed, i, log_dir, allow_early_resets, get_pixel=get_pixel)
+        make_env(env_name, seed, i, log_dir, allow_early_resets, get_pixel=get_pixel, resolution_scale=resolution_scale)
         for i in range(num_processes)
     ]
 
@@ -245,8 +254,8 @@ def make_vec_envs(env_name,
     if num_frame_stack is not None:
         envs = VecPyTorchFrameStack(envs, num_frame_stack, device)
     # For miniworld and minigrid environments, the input dimension is small enough to only use
-    elif len(envs.observation_space.shape) == 3 and env_name.startswith("MiniGrid") == False:
-        envs = VecPyTorchFrameStack(envs, 4, device)
+    # elif len(envs.observation_space.shape) == 3 and not env_name.startswith("Mini"):
+    #     envs = VecPyTorchFrameStack(envs, 4, device)
 
     return envs
 

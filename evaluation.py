@@ -70,9 +70,11 @@ def save_gif(actor_critic,
              bonus1,
              save_dir = './saved',
              tile_size = 1,
-             persistent = False):
+             persistent = False,
+             always_zero = False,
+             resolution_scale = 1,):
     eval_envs = make_vec_envs(env_name, seed + num_processes, num_processes,
-                              None, '', device, True, get_pixel = True)
+                              None, '', device, True, get_pixel = True, resolution_scale = resolution_scale)
 
     eval_episode_rewards = []
     obs = eval_envs.reset()
@@ -95,9 +97,15 @@ def save_gif(actor_critic,
         value1, action1, action_log_prob1, recurrent_hidden_states1 = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
 
         # TODO make sure the last index of actions is the right hting to do
+        if always_zero:
+            action1 = torch.zeros(action1.shape).long()
         if len(eval_episode_rewards) == 0:
             action2 = torch.zeros(action1.shape).long()
-        last_action = 1 + action2
+
+        if eval_envs.action_space.__class__.__name__ == "Discrete":
+            last_action = 1 + action2
+        elif eval_envs.action_space.__class__.__name__ == "Box":
+            last_action = action2
 
         value2, action2, action_log_prob2, recurrent_hidden_states2 = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
             info=torch.cat([action1, last_action], dim=1))
@@ -109,11 +117,15 @@ def save_gif(actor_critic,
         obs, reward, done, infos = eval_envs.step(action)
         imgs = np.array(eval_envs.full_obs())
         gate = action1.byte().squeeze()
+        # print(gate.sum(), gate.shape, imgs.shape)
         gate = gate.reshape((-1, 1, 1, 1)).data.numpy()
         imgs = imgs[:, 0] * gate + imgs[:, 1] * (1-gate)
+        # print(imgs.sum(), imgs[:, 0].sum(), imgs[:, 1].sum())
+
         if env_name.startswith("MiniWorld"):
+            # print(obs.shape, imgs.shape) [16, 12, 60, 80] (16, 60, 80, 3)
             for (ob, im, paths, d, dones, top_view) in zip(obs, imgs, all_paths, done, all_dones, all_top_views):
-                paths.append(ob.detach().numpy())
+                paths.append(ob[:3].detach().numpy())
                 dones.append(d)
                 top_view.append(im)
         else:
@@ -191,7 +203,7 @@ def save_gif(actor_critic,
                 done = c
                 path[done:] = 0
                 total.append(path[:done+1])
-                print(path[:done+1].shape)
+                # print(path[:done+1].shape)
 
                 path = np.array(all_top_views[r])
                 path[done:] = 0
@@ -199,7 +211,11 @@ def save_gif(actor_critic,
 
         if len(total_for_img) < num_processes:
             for _ in range(num_processes - len(total_for_img)):
-                total_for_img.append(np.zeros((epi_length, 60, 80, 3)))
+                if resolution_scale == 1:
+                    total_for_img.append(np.zeros((epi_length, 60, 80, 3)))
+                elif resolution_scale == .5:
+                    total_for_img.append(np.zeros((epi_length, 30, 40, 3)))
+
 
         all_paths = np.array(total_for_img)
         # change the color of the starting point
@@ -224,6 +240,7 @@ def save_gif(actor_critic,
         dir_name = save_dir
         if os.path.isdir(dir_name) == False:
             os.makedirs(dir_name)
+    print(img_list.shape, total[0].shape, len(total))
     imageio.mimsave(dir_name + '/bouns-' + str(bonus1) + '-epoch-'+ str(epoch) + '-seed-'+ str(seed) + '.gif', total, duration=0.5)
     # if np.sum(columns) != 16 * 39:
     # cv2.imwrite(dir_name + '/img.png', img_list)

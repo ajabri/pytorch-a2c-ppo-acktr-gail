@@ -241,6 +241,10 @@ class OpsPolicy(nn.Module):
         super(OpsPolicy, self).__init__()
 
         if len(obs_shape) == 3:
+            if base_kwargs['resolution_scale'] == .5:
+                obs_shape = (obs_shape[0], obs_shape[1]//2, obs_shape[2]//2)
+            elif base_kwargs['resolution_scale'] == .25:
+                obs_shape = (obs_shape[0], obs_shape[1]//4, obs_shape[2]//4)
             self.base = OpsBase(obs_shape, action_space, is_leaf=is_leaf, mode='cnn', **base_kwargs)
         else:
             self.base = OpsBase(obs_shape[0], action_space, is_leaf=is_leaf, **base_kwargs)
@@ -273,10 +277,10 @@ class OpsPolicy(nn.Module):
 
     def act(self, inputs, rnn_hxs, masks, deterministic=False, info=None):
         value, actor_features, rnn_hxs, all_hxs = self.base(inputs, rnn_hxs, masks, info=info)
-        dist = self.dist(actor_features)
+        dist = self.dist(actor_features) #[16, 64]
 
         if deterministic:
-            action = dist.mode()
+            action = dist.mode() #[16, 3]
         else:
             action = dist.sample()
 
@@ -298,7 +302,6 @@ class OpsPolicy(nn.Module):
         # actor_features: [2048, 64]
         value, actor_features, rnn_hxs, all_hxs = self.base(inputs, rnn_hxs, masks, info=info)
         dist = self.dist(actor_features)
-
         action_log_probs = dist.log_probs(action)
         dist_entropy = dist.entropy().mean()
 
@@ -408,19 +411,29 @@ class OpsBase(NNBase):
         # if recurrent:
         #     num_inputs = hidden_size
 
-        # if len(num_inputs) == 3:
-        if mode == 'cnn':
-            self.cnn = self.make_cnn(in_dim=num_inputs, out_dim=hidden_size)
-            num_inputs = hidden_size
-
         self.is_leaf = is_leaf
         self.gate_input = gate_input
         self.hidden_size = hidden_size
         self.persistent = persistent
         self.resolution_scale = resolution_scale
+        self.action_space = action_space
+
+
+        # if len(num_inputs) == 3:
+        if mode == 'cnn':
+            self.cnn = self.make_cnn(in_dim=num_inputs, out_dim=hidden_size)
+            num_inputs = hidden_size
+
 
         if is_leaf:
-            self.act_emb = nn.Embedding(action_space.n + 1, hidden_size, padding_idx=0)
+            if action_space.__class__.__name__ == "Discrete":
+                self.act_emb = nn.Embedding(action_space.n + 1, hidden_size, padding_idx=0)
+            elif action_space.__class__.__name__ == "Box":
+                self.act_emb = nn.Sequential(
+                    init_(nn.Linear(action_space.shape[0], hidden_size)), nn.ReLU())
+            else:
+                raise NotImplementedError
+            # self.act_emb = nn.Embedding(action_space.n + 1, hidden_size, padding_idx=0)
             self.cell = OpsCell(num_inputs, act_dim=hidden_size, hidden_size=hidden_size, persistent=persistent)
 
         if is_leaf:
@@ -456,28 +469,22 @@ class OpsBase(NNBase):
                     constant_(x, 0), nn.init.calculate_gain('relu'))
 
         C, H, W = in_dim
-        # print(in_dim)
-        # out_shape = (((H - 2 -1) // 2 + 1) - 2 - 2) * (((W - 2 -1) // 2 + 1) - 2 - 2)
+        out_shape = (((H - 2 -1) // 2 + 1) - 2 - 2) * (((W - 2 -1) // 2 + 1) - 2 - 2)
         # out_shape = (((H - 2 -1) // 2 + 1) - 2) * (((W - 2 -1) // 2 + 1) - 2)
         # # out_shape = (((H - 2 -1) // 2 + 1) ) * (((W - 2 -1) // 2 + 1) )
         # # print(in_dim, out_dim, out_shape)
         # encoder = nn.Sequential(
-        #     # kornia.color.Normalize(
-        #     #     mean=torch.Tensor([[0,0,0]]),
-        #     #     std=torch.Tensor([[128, 128, 128]])
-        #     # ),
-        #     init_(nn.Conv2d(in_dim[0], 32, 3, stride=2)), nn.ReLU(),
-        #     # init_(nn.Conv2d(32, 64, 3, stride=1)), nn.ReLU(),
-        #     init_(nn.Conv2d(32, 32, 3, stride=1)), nn.ReLU(),
-        #     # init_(nn.Conv2d(64, 32, 3, stride=1)), nn.ReLU(), Flatten(),
+        #     init_(nn.Conv2d(C, 32, 3, stride=2)), nn.ReLU(),
+        #     init_(nn.Conv2d(32, 64, 3, stride=1)), nn.ReLU(),
+        #     init_(nn.Conv2d(64, 32, 3, stride=1)), nn.ReLU(), Flatten(),
         #     Flatten(),
         #     init_(nn.Linear(32 * out_shape, out_dim)), nn.ReLU())
 
 
         # For 80x60 input
         # assert np.prod(in_dim[1:]) == 80 * 60
-        out_shape = ((((H-4-1)//2+1-4-1)//2+1)-3-1)//2+1 * ((((W-4-1)//2+1-4-1)//2+1)-3-1)//2+1
-
+        # if self.resolution_scale == 1.:
+        out_shape = (((((H-4-1)//2+1-4-1)//2+1)-3-1)//2+1) * (((((W-4-1)//2+1-4-1)//2+1)-3-1)//2+1)
         encoder = nn.Sequential(
             init_(nn.Conv2d(in_dim[0], 32, kernel_size=5, stride=2)),
             nn.BatchNorm2d(32),
@@ -493,29 +500,57 @@ class OpsBase(NNBase):
 
             Flatten(),
 
-            init_(nn.Linear(32 * 7 * 5, out_dim)),
+            init_(nn.Linear(32 * out_shape, out_dim)),
             nn.ReLU()
         )
+        # else:
+        #     import kornia
+        #     H, W = int(H*self.resolution_scale), int(W*self.resolution_scale)
+        #     out_shape = (((((H-4-1)//2+1-4-1)//2+1)-3-1)//2+1) * (((((W-4-1)//2+1-4-1)//2+1)-3-1)//2+1)
+        #     encoder = nn.Sequential(
+        #         # kornia.geometry.transform.Resize((C, H, W)),
+        #         init_(nn.Conv2d(in_dim[0], 32, kernel_size=5, stride=2)),
+        #         nn.BatchNorm2d(32),
+        #         nn.ReLU(),
+        #
+        #         init_(nn.Conv2d(32, 32, kernel_size=5, stride=2)),
+        #         nn.BatchNorm2d(32),
+        #         nn.ReLU(),
+        #
+        #         init_(nn.Conv2d(32, 32, kernel_size=4, stride=2)),
+        #         nn.BatchNorm2d(32),
+        #         nn.ReLU(),
+        #
+        #         Flatten(),
+        #
+        #         init_(nn.Linear(32 * out_shape, out_dim)),
+        #         nn.ReLU()
+        #     )
 
         return encoder
 
     def forward(self, inputs, rnn_hxs, masks, info=None):
         x = inputs
+        # print(x.shape)
         if self.resolution_scale == .5:
             x = x[:, :, ::2, ::2]
         elif self.resolution_scale == .25:
             x = x[:, :, ::4, ::4]
-        # print(x.shape)
         # import pdb; pdb.set_trace()
         if x.ndim > 3:
-            x /= 255
+            x = x/255
             x = self.cnn(x)
 
         if info is not None and info.numel() > 0:
-            g, a = torch.split(info, 1, dim=-1)
+            # g, a = torch.split(info, 1, dim=-1)
+            assert len(info.shape) == 2
+            g, a = info[:, 0].unsqueeze(dim=-1), info[:, 1:]
+            if self.action_space.__class__.__name__ == "Discrete":
+                # consider embedding all observations and actions before passing to gru...
+                a = self.act_emb(a.squeeze(-1).long())
+            elif self.action_space.__class__.__name__ == "Box":
+                a = self.act_emb(a)
 
-            # consider embedding all observations and actions before passing to gru...
-            a = self.act_emb(a.squeeze(-1).long())
             x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks, g, a)
 
             hidden_critic = self.critic(x)

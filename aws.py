@@ -36,7 +36,7 @@ class ClassEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 INSTANCE_TYPE = 'c4.4xlarge'
-EXP_NAME = 'async/debug-y-maze'
+EXP_NAME = 'async/debug-maze3'
 
 def main(**kwargs):
     args = get_args()
@@ -70,18 +70,18 @@ def main(**kwargs):
 
     torch.set_num_threads(1)
     envs = make_vec_envs(kwargs['env_name'], kwargs['seed'], kwargs['num_processes'],
-                         kwargs['gamma'], log_dir, device, False)
+                         kwargs['gamma'], log_dir, device, False, resolution_scale=kwargs['scale'])
 
-    # render_func = envs.venv.venv.get_images_single
     flip,flip1 = False, False
 
     def make_agent(is_leaf=True):
         ## AGENT CONSTRUCTION:
         ## Modularize this and allow for cascading (obs dim for child policy should be cat of obs and parents output)
         scaled_obs_shape = envs.observation_space.shape
-        if kwargs['env_name'].startswith("MiniWorld"):
-            C, H, W = scaled_obs_shape
-            scaled_obs_shape = [C, int(H * kwargs['scale']), int(W * kwargs['scale'])]
+        # if kwargs['env_name'].startswith("MiniWorld"):
+        #     C, H, W = scaled_obs_shape
+            # scaled_obs_shape = [C, int(H * kwargs['scale']), int(W * kwargs['scale'])]
+            # scaled_obs_shape = [C, int(H * kwargs['scale']), int(W * kwargs['scale'])]
         actor_critic = OpsPolicy(
             scaled_obs_shape,
             envs.action_space if is_leaf else gym.spaces.Discrete(2),
@@ -90,7 +90,8 @@ def main(**kwargs):
                 recurrent=True,
                 partial_obs=kwargs['partial_obs'],
                 gate_input=kwargs['gate_input'],
-                resolution_scale=kwargs['scale'],
+                hidden_size=kwargs['hidden_size'],
+                resolution_scale= 1 if kwargs['env_name'].startswith("MiniWorld") else kwargs['scale'],
                 persistent=kwargs['persistent']),
                 )
 
@@ -122,17 +123,25 @@ def main(**kwargs):
                 actor_critic, kwargs['value_loss_coef'], kwargs['entropy_coef'], acktr=True)
 
 
-
-        if kwargs['persistent']:
-            rollouts = RolloutStorage(kwargs['num_steps'], kwargs['num_processes'],
-                                    envs.observation_space.shape, envs.action_space,
-                                    actor_critic.recurrent_hidden_state_size * 2,
-                                    info_size=2 if is_leaf else 0)
+        if envs.action_space.__class__.__name__ == 'Discrete':
+            action_dim = 1
         else:
+            action_dim = envs.action_space.shape[0] if is_leaf else 1
+        if kwargs['persistent']:
+            recurrent_hidden_size = actor_critic.recurrent_hidden_state_size * 2
+        else:
+            recurrent_hidden_size = actor_critic.recurrent_hidden_state_size
+
+        if envs.action_space.__class__.__name__ == "Discrete":
             rollouts = RolloutStorage(kwargs['num_steps'], kwargs['num_processes'],
                                     envs.observation_space.shape, envs.action_space,
-                                    actor_critic.recurrent_hidden_state_size,
-                                    info_size=2 if is_leaf else 0)
+                                    recurrent_hidden_size,
+                                    info_size=2 if is_leaf else 0, action_shape=action_dim)
+        elif envs.action_space.__class__.__name__ == "Box":
+            rollouts = RolloutStorage(kwargs['num_steps'], kwargs['num_processes'],
+                                    envs.observation_space.shape, envs.action_space,
+                                    recurrent_hidden_size,
+                                    info_size=1+envs.action_space.shape[0] if is_leaf else 0, action_shape=action_dim)
 
         actor_critic.to(device)
         rollouts.to(device)
@@ -178,14 +187,22 @@ def main(**kwargs):
             # Sample actions
             value1, action1, action_log_prob1, recurrent_hidden_states1 = act(0, step)
 
+            if kwargs['always_zero']:
+                action1 = torch.zeros(action1.shape).long()
+
             # if np.random.random() > 0.9:
             #     print(action1.numpy().tolist())
             # TODO make sure the last index of actions is the right hting to do
-            last_action = 1 + rollouts[1].actions[step-1]
 
             # import pdb; pdb.set_trace()
-            value2, action2, action_log_prob2, recurrent_hidden_states2 = act(1, step,
-                info=torch.cat([action1, last_action], dim=1))
+            last_action = rollouts[1].actions[step-1]
+            if last_action.dtype == torch.float32:
+                value2, action2, action_log_prob2, recurrent_hidden_states2 = act(1, step,
+                    info=torch.cat([action1.float(), last_action], dim=1))
+            else:
+                last_action = last_action + 1
+                value2, action2, action_log_prob2, recurrent_hidden_states2 = act(1, step,
+                    info=torch.cat([action1, last_action], dim=1))
 
             action = action2
             recurrent_hidden_states = recurrent_hidden_states2
@@ -205,16 +222,24 @@ def main(**kwargs):
                 [[0.0] if 'bad_transition' in info.keys() else [1.0]
                  for info in infos]).to(device)
 
-            int_rew = action1 * kwargs['bonus1']
+            # int_rew = action1 * kwargs['bonus1']
+            scaled_reward = action1 * np.abs(reward) * kwargs['bonus3'] + reward
 
-
+            # rollouts[0].insert(obs, recurrent_hidden_states, action1,
+            #                 action_log_prob1, value1, reward + scaled_reward, masks, bad_masks,
+            #                 infos=None)
             rollouts[0].insert(obs, recurrent_hidden_states, action1,
-                            action_log_prob1, value1, reward + int_rew, masks, bad_masks,
+                            action_log_prob1, value1, scaled_reward, masks, bad_masks,
                             infos=None)
 
-            rollouts[1].insert(obs, recurrent_hidden_states, action2,
-                            action_log_prob2, value2, reward, masks, bad_masks,
-                            infos=torch.cat([action1, last_action], dim=1))
+            if last_action.dtype == torch.float32:
+                rollouts[1].insert(obs, recurrent_hidden_states, action2,
+                                action_log_prob2, value2, reward, masks, bad_masks,
+                                infos=torch.cat([action1.float(), last_action], dim=1))
+            else:
+                rollouts[1].insert(obs, recurrent_hidden_states, action2,
+                                action_log_prob2, value2, reward, masks, bad_masks,
+                                infos=torch.cat([action1, last_action], dim=1))
 
         def update(i, info=None):
             with torch.no_grad():
@@ -224,23 +249,32 @@ def main(**kwargs):
 
             rollouts[i].compute_returns(next_value, kwargs['use_gae'], kwargs['gamma'],
                                     kwargs['gae_lambda'], kwargs['use_proper_time_limits'])
-
-            value_loss, action_loss, dist_entropy, pred_err = agent[i].update(rollouts[i],
-                pred_loss=i!=0)
+            if kwargs['pred_loss']:
+                value_loss, action_loss, dist_entropy, pred_err = agent[i].update(rollouts[i],
+                    pred_loss=(i!=0))
+            else:
+                value_loss, action_loss, dist_entropy, pred_err = agent[i].update(rollouts[i],
+                    pred_loss=False)
 
             rollouts[i].after_update()
 
             return value_loss, action_loss, dist_entropy, pred_err
 
         if j % 2 == 0 or True:
+            print("updating agent 0")
             value_loss1, action_loss1, dist_entropy1, pred_err1 = update(0)
         if (j % 2) == 1 or True:
+            print("updating agent 1")
             _, action1, _, _ = actor_critic[0].act(
                     rollouts[0].obs[-1], rollouts[0].recurrent_hidden_states[-1],
                     rollouts[0].masks[-1])
 
-            value_loss2, action_loss2, dist_entropy2, pred_err2 = update(1,
-                info=torch.cat([action1, rollouts[1].actions[-1]+1 ], dim=-1))
+            if envs.action_space.__class__.__name__ == "Discrete":
+                value_loss2, action_loss2, dist_entropy2, pred_err2 = update(1,
+                    info=torch.cat([action1, rollouts[1].actions[-1]+1 ], dim=-1))
+            else:
+                value_loss2, action_loss2, dist_entropy2, pred_err2 = update(1,
+                    info=torch.cat([action1.float(), rollouts[1].actions[-1]+1 ], dim=-1))
 
 
         # save for every interval-th episode or for the last epoch
@@ -290,10 +324,12 @@ def main(**kwargs):
                     # wandb_lunarlander(capt, pred)
                     logging.wandb_minigrid(capt, pred)
 
-            if j % kwargs['gif_save_interval'] == 0:
+            if j % kwargs['gif_save_interval'] == 0 and kwargs['env_name'].startswith("Mini"):
+                # only do visualization for mini environments
                 img_list = save_gif(actor_critic, kwargs['env_name'], kwargs['seed'],
                              kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
-                             tile_size = kwargs['tile_size'], persistent = kwargs['persistent'])
+                             persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
+                             resolution_scale = kwargs['scale'])
                 if not kwargs['debug']:
                     wandb.log({"visualization %s" % j: wandb.Image(img_list)})
 
@@ -321,37 +357,37 @@ if __name__ == "__main__":
     sweep_params = {
         'algo': ['ppo'],
         'seed': [111, 222],
-        'env_name': ['MiniWorld-YMaze-v0'],
+        # 'env_name': ['MiniWorld-YMaze-v0'],
+        'env_name': ['CarRacing-v0'],
         # 'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
 
         'use_gae': [True],
-        # 'lr': [2.5e-4],
-        'lr': [0.00005],
+        'lr': [2.5e-4],
         # 'clip_param': [0.1],
         'clip_param': [0.2],
         'value_loss_coef': [0.5],
         'num_processes': [16],
-        # 'num_steps': [512],
-        'num_steps': [80],
+        'num_steps': [512],
         'num_mini_batch': [4],
         'log_interval': [1],
         'use_linear_lr_decay': [True],
-        # 'entropy_coef': [0.005],
-        'entropy_coef': [1e-2],
-        # 'num_env_steps': [20000000],
+        'entropy_coef': [0.005],
+        # 'entropy_coef': [0.01],
         'num_env_steps': [50000000],
-        'bonus1': [0, 0.02],
-        # 'bonus2': [0],
+        'bonus1': [0],
+        'bonus3': [0.2, 0.4],
         'cuda': [False],
-        'proj_name': ['debug-y-maze'],
-        'gif_save_interval': [100],
-        'note': ['stack'],
-        'tile_size': [8],
+        'proj_name': ['debug-car'],
+        'gif_save_interval': [30],
+        'note': [''],
         'debug': [False],
         'gate_input': ['obs'], #'obs' | 'hid'
         'partial_obs': [False],
         'persistent': [False],
-        'scale': [1],
+        'scale': [.5],
+        'hidden_size': [128],
+        'always_zero': [False],
+        'pred_loss': [False],
         }
 
     run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)
