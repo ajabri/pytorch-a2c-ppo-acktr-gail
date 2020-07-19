@@ -36,7 +36,7 @@ class ClassEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 INSTANCE_TYPE = 'c4.4xlarge'
-EXP_NAME = 'async/debug-maze3'
+EXP_NAME = 'async/debug-four-room'
 
 def main(**kwargs):
     args = get_args()
@@ -50,9 +50,9 @@ def main(**kwargs):
         torch.cuda.manual_seed_all(kwargs['seed'])
     device = torch.device("cuda:0" if kwargs['cuda'] else "cpu")
 
-    # if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
-    #     torch.backends.cudnn.benchmark = False
-    #     torch.backends.cudnn.deterministic = True
+    if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
 
     # log_dir = os.path.expanduser(kwargs['log_dir'])
     exp_dir = os.getcwd() + '/data/' + EXP_NAME
@@ -188,7 +188,7 @@ def main(**kwargs):
             value1, action1, action_log_prob1, recurrent_hidden_states1 = act(0, step)
 
             if kwargs['always_zero']:
-                action1 = torch.zeros(action1.shape).long()
+                action1 = torch.zeros(action1.shape).to(device).long()
 
             # if np.random.random() > 0.9:
             #     print(action1.numpy().tolist())
@@ -222,12 +222,9 @@ def main(**kwargs):
                 [[0.0] if 'bad_transition' in info.keys() else [1.0]
                  for info in infos]).to(device)
 
-            # int_rew = action1 * kwargs['bonus1']
-            scaled_reward = action1 * np.abs(reward) * kwargs['bonus3'] + reward
+            scaled_reward = (action1 * kwargs['bonus1']).to(device) + reward.to(device)
+            # scaled_reward = action1 * np.abs(reward) * kwargs['bonus3'] + reward
 
-            # rollouts[0].insert(obs, recurrent_hidden_states, action1,
-            #                 action_log_prob1, value1, reward + scaled_reward, masks, bad_masks,
-            #                 infos=None)
             rollouts[0].insert(obs, recurrent_hidden_states, action1,
                             action_log_prob1, value1, scaled_reward, masks, bad_masks,
                             infos=None)
@@ -358,36 +355,37 @@ if __name__ == "__main__":
         'algo': ['ppo'],
         'seed': [111, 222],
         # 'env_name': ['MiniWorld-YMaze-v0'],
-        'env_name': ['CarRacing-v0'],
+        # 'env_name': ['CarRacing-v0'],
         # 'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
+        'env_name': ['MiniWorld-FourRooms-v0'],
 
         'use_gae': [True],
         'lr': [2.5e-4],
-        # 'clip_param': [0.1],
-        'clip_param': [0.2],
+        'clip_param': [0.1],
+        # 'clip_param': [0.2],
         'value_loss_coef': [0.5],
         'num_processes': [16],
         'num_steps': [512],
         'num_mini_batch': [4],
         'log_interval': [1],
         'use_linear_lr_decay': [True],
-        'entropy_coef': [0.005],
+        'entropy_coef': [0.005, 0.01],
         # 'entropy_coef': [0.01],
         'num_env_steps': [50000000],
         'bonus1': [0],
-        'bonus3': [0.2, 0.4],
+        # 'bonus3': [0.2],
         'cuda': [False],
-        'proj_name': ['debug-car'],
+        'proj_name': ['debug-four-rooms'],
         'gif_save_interval': [30],
         'note': [''],
         'debug': [False],
         'gate_input': ['obs'], #'obs' | 'hid'
         'partial_obs': [False],
         'persistent': [False],
-        'scale': [.5],
+        'scale': [1],
         'hidden_size': [128],
         'always_zero': [False],
-        'pred_loss': [False],
+        'pred_loss': [True, False],
         }
 
     run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)

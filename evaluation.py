@@ -9,48 +9,6 @@ import imageio
 import os
 import gym
 
-# def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
-#              device):
-#     eval_envs = make_vec_envs(env_name, seed + num_processes, num_processes,
-#                               None, eval_log_dir, device, True)
-#
-#     vec_norm = utils.get_vec_normalize(eval_envs)
-#     if vec_norm is not None:
-#         vec_norm.eval()
-#         vec_norm.ob_rms = ob_rms
-#
-#     eval_episode_rewards = []
-#
-#     obs = eval_envs.reset()
-#     eval_recurrent_hidden_states = torch.zeros(
-#         num_processes, actor_critic.recurrent_hidden_state_size, device=device)
-#     eval_masks = torch.zeros(num_processes, 1, device=device)
-#
-#     while len(eval_episode_rewards) < 10:
-#         with torch.no_grad():
-#             _, action, _, eval_recurrent_hidden_states = actor_critic.act(
-#                 obs,
-#                 eval_recurrent_hidden_states,
-#                 eval_masks,
-#                 deterministic=True)
-#
-#         # Obser reward and next obs
-#         obs, _, done, infos = eval_envs.step(action)
-#
-#         eval_masks = torch.tensor(
-#             [[0.0] if done_ else [1.0] for done_ in done],
-#             dtype=torch.float32,
-#             device=device)
-#
-#         for info in infos:
-#             if 'episode' in info.keys():
-#                 eval_episode_rewards.append(info['episode']['r'])
-#
-#     eval_envs.close()
-#
-#     print(" Evaluation using {} episodes: mean reward {:.5f}\n".format(
-#         len(eval_episode_rewards), np.mean(eval_episode_rewards)))
-#
 
 def act(actor_critic, obs, recurrent_hidden_states, masks, **kwargs):
     with torch.no_grad():
@@ -78,33 +36,40 @@ def save_gif(actor_critic,
 
     eval_episode_rewards = []
     obs = eval_envs.reset()
+    _, C, H, W = obs.shape
 
     if persistent:
-        eval_recurrent_hidden_states = torch.zeros(
-            num_processes, actor_critic[0].recurrent_hidden_state_size * 2, device=device)
+        recurrent_hidden_size = actor_critic[0].recurrent_hidden_state_size * 2
     else:
-        eval_recurrent_hidden_states = torch.zeros(
-            num_processes, actor_critic[0].recurrent_hidden_state_size, device=device)
+        recurrent_hidden_size = actor_critic[0].recurrent_hidden_state_size
+
+    eval_recurrent_hidden_states = torch.zeros(
+        num_processes, recurrent_hidden_size, device=device)
+
     eval_masks = torch.zeros(num_processes, 1, device=device)
 
     all_paths = [[] for _ in range(num_processes)]
+
     if env_name.startswith("MiniWorld"):
         all_top_views = [[] for _ in range(num_processes)]
+
     all_dones = [[] for _ in range(num_processes)]
 
+    dicrete_action = (eval_envs.action_space.__class__.__name__ == "Discrete")
     while len(eval_episode_rewards) < 10:
         # print(len(eval_episode_rewards))
         value1, action1, action_log_prob1, recurrent_hidden_states1 = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
 
         # TODO make sure the last index of actions is the right hting to do
         if always_zero:
-            action1 = torch.zeros(action1.shape).long()
-        if len(eval_episode_rewards) == 0:
-            action2 = torch.zeros(action1.shape).long()
+            action1 = torch.zeros(action1.shape).to(device).long()
 
-        if eval_envs.action_space.__class__.__name__ == "Discrete":
+        if len(eval_episode_rewards) == 0:
+            action2 = torch.zeros(action1.shape).to(device).long()
+
+        if dicrete_action:
             last_action = 1 + action2
-        elif eval_envs.action_space.__class__.__name__ == "Box":
+        else:
             last_action = action2
 
         value2, action2, action_log_prob2, recurrent_hidden_states2 = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
@@ -113,19 +78,23 @@ def save_gif(actor_critic,
         action = action2
         eval_recurrent_hidden_states = recurrent_hidden_states2
 
-        # Obser reward and next obs
         obs, reward, done, infos = eval_envs.step(action)
+
         imgs = np.array(eval_envs.full_obs())
         gate = action1.byte().squeeze()
-        # print(gate.sum(), gate.shape, imgs.shape)
-        gate = gate.reshape((-1, 1, 1, 1)).data.numpy()
+        if gate.is_cuda:
+            gate = gate.reshape((-1, 1, 1, 1)).cpu().data.numpy()
+        else:
+            gate = gate.reshape((-1, 1, 1, 1)).data.numpy()
         imgs = imgs[:, 0] * gate + imgs[:, 1] * (1-gate)
-        # print(imgs.sum(), imgs[:, 0].sum(), imgs[:, 1].sum())
 
         if env_name.startswith("MiniWorld"):
             # print(obs.shape, imgs.shape) [16, 12, 60, 80] (16, 60, 80, 3)
             for (ob, im, paths, d, dones, top_view) in zip(obs, imgs, all_paths, done, all_dones, all_top_views):
-                paths.append(ob[:3].detach().numpy())
+                if ob.is_cuda:
+                    paths.append(ob[:3].cpu().detach().numpy())
+                else:
+                    paths.append(ob[:3].detach().numpy())
                 dones.append(d)
                 top_view.append(im)
         else:
@@ -145,7 +114,7 @@ def save_gif(actor_critic,
 
     if env_name.startswith("MiniGrid-MultiRoom"):
         all_dones = np.array(all_dones)
-        rows, columns = np.where(all_dones == True)
+        rows, columns = np.where(all_dones=True)
         total = []
         epi_length = all_dones.shape[1]
         total_for_img = []
@@ -196,25 +165,21 @@ def save_gif(actor_critic,
         """only save the episodes that terminate. """
         # it's possible that there are two or none-dones
         row_record = []
-        for (r, c) in zip(rows, columns):
-            if r not in row_record:
-                row_record.append(r)
-                path = np.array(all_paths[r])
-                done = c
-                path[done:] = 0
-                total.append(path[:done+1])
-                # print(path[:done+1].shape)
 
+        for i in range(num_processes):
+            row_record.append(i)
+            if i in rows: #if at least one of the episodes in this process terminates
+                idx = np.where(rows == i)[0][0]
+                r, done = i, columns[idx]
+                path = np.array(all_paths[r])
+                path[done+1:] = 0
+                total.append(path[:done+1])
+                # total.append(path[:done])
                 path = np.array(all_top_views[r])
                 path[done:] = 0
                 total_for_img.append(path)
-
-        if len(total_for_img) < num_processes:
-            for _ in range(num_processes - len(total_for_img)):
-                if resolution_scale == 1:
-                    total_for_img.append(np.zeros((epi_length, 60, 80, 3)))
-                elif resolution_scale == .5:
-                    total_for_img.append(np.zeros((epi_length, 30, 40, 3)))
+            else:
+                total_for_img.append(all_top_views[i])
 
 
         all_paths = np.array(total_for_img)
@@ -240,6 +205,7 @@ def save_gif(actor_critic,
         dir_name = save_dir
         if os.path.isdir(dir_name) == False:
             os.makedirs(dir_name)
+
     print(img_list.shape, total[0].shape, len(total))
     imageio.mimsave(dir_name + '/bouns-' + str(bonus1) + '-epoch-'+ str(epoch) + '-seed-'+ str(seed) + '.gif', total, duration=0.5)
     # if np.sum(columns) != 16 * 39:

@@ -93,26 +93,24 @@ class FullyObsWrapper(ImgObsWrapper):
         # RED: observe
         # BLUE: predict
         return rgb_img2, rgb_img
-
-# basically doesn't work for some reasons (some functions are missing somewhere)
-# class DownscaleWrapper(gym.ObservationWrapper):
-#     def __init__(self, env=None):
-#         super().__init__(env)
-#         from gym import spaces
-#         self.scale = 0.25
-#         H, W = 60, 80
-#         self.observation_space = spaces.Box(
-#             low=0,
-#             high=255,
-#             shape=(int(H*self.scale), int(W*self.scale), 3),
-#             dtype=np.uint8
-#         )
-        # print(self.observation_space)
-
-    # def observation(self, observation):
-    #     obs = cv2.resize(observation,None,fx=self.scale,fy=self.scale)
-    #     return obs
-        # return observation.transpose(2, 1, 0)
+#
+# class MiniWorldWrapper(gym.core.ObservationWrapper):
+#     def __init__(self, env, resolution_scale=1):
+#         if resolution_scale == .5:
+#             super().__init__(env, obs_height=30, obs_width=40)
+#         else:
+#             super().__init__(env)
+#
+#     def full_obs(self):
+#         obs = env.render_top_view()
+#         obs2 = obs.copy()
+#         r, g, b = obs[:, :, 0], obs[:, :, 1], obs[:, :, 2]
+#         indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
+#         # ratio = r[indices].reshape((-1, 1))
+#         ratio = 255
+#         obs2[indices] = ratio * np.array([0, 0, 1])
+#         obs[indices] = ratio * np.array([1, 0, 0])
+#         return obs2, obs
 
 
 def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False, resolution_scale = 1.):
@@ -131,6 +129,7 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
             import gym_miniworld
             from gym_miniworld.miniworld import MiniWorldEnv, Room
             from gym_miniworld.envs.ymaze import YMaze
+            from gym_miniworld.envs.fourrooms import FourRooms
             class YMazeNew(YMaze):
                 def __init__(self):
                     # super().__init__(obs_height=15, obs_width=20)
@@ -138,24 +137,6 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
                         super().__init__(obs_height=30, obs_width=40)
                     else:
                         super().__init__()
-
-                # def step(self, action):
-                #     obs, reward, done, info = super().step(action)
-                #
-                #     if self.near(self.box):
-                #         done = True
-                #     reward += self._reward()
-                #
-                #     info['goal_pos'] = self.box.pos
-                #
-                #     return obs, reward, done, info
-                #
-                # def _reward(self):
-                #     """
-                #     Dense reward computation
-                #     """
-                #     return -np.linalg.norm(self.agent.pos - self.box.pos)
-                    # return 1.0 - 0.2 * (self.step_count / self.max_episode_steps)
 
                 def full_obs(self):
                     """
@@ -172,7 +153,30 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
                     # # RED: observe
                     # # GREEN: predict
 
-            env = YMazeNew()
+            class FourRoomsNew(FourRooms):
+                def __init__(self):
+                    if resolution_scale == .5:
+                        super().__init__(obs_height=30, obs_width=40)
+                    else:
+                        super().__init__()
+
+                def full_obs(self):
+                    """
+                    actually just a change of view, change it in the future"""
+                    obs = env.render_top_view()
+                    obs2 = obs.copy()
+                    r, g, b = obs[:, :, 0], obs[:, :, 1], obs[:, :, 2]
+                    indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
+                    ratio = 255
+                    obs2[indices] = ratio * np.array([0, 0, 1])
+                    obs[indices] = ratio * np.array([1, 0, 0])
+                    return obs2, obs
+
+
+            # env = YMazeNew()
+            env = FourRoomsNew()
+            # env = gym.make(env_id)
+            # env = MiniWorldWrapper(env)
         else:
             env = gym.make(env_id)
 
