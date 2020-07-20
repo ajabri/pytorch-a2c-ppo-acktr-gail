@@ -114,48 +114,48 @@ def save_gif(actor_critic,
 
     if env_name.startswith("MiniGrid-MultiRoom"):
         all_dones = np.array(all_dones)
-        rows, columns = np.where(all_dones=True)
-        total = []
-        epi_length = all_dones.shape[1]
-        total_for_img = []
-        """only save the episodes that terminate. """
-        # it's possible that there are two or none-dones
-        row_record = []
-        for (r, c) in zip(rows, columns):
-            if r not in row_record:
-                row_record.append(r)
-                path = np.array(all_paths[r])
-                done = c
-                path[done:] = 0
-                total_for_img.append(path)
-                total.append(path[:done+1])
-
-        if len(total_for_img) < num_processes:
-            for _ in range(num_processes - len(total_for_img)):
-                total_for_img.append(np.zeros((epi_length, 200, 200, 3)))
-
-        all_paths = np.array(total_for_img)
-        # change the color of the starting point
-        r, g, b = all_paths[:, :, :, :, 0], all_paths[:, :, :, :, 1], all_paths[:, :, :, :, 2]
-        # get all the agent positions
-        indices = np.logical_or(np.logical_and(r!=0, np.logical_and(g==0, b==0)), np.logical_and(b!=0, np.logical_and(g==0, r==0)))
-        # only choose the starting point
-        indices[:, 1:] = False
-        ratio = r[indices].reshape((-1, 1)) + b[indices].reshape((-1, 1))
-        all_paths[indices] += ratio * np.array([0, 1, 0]).astype(all_paths.dtype)
-        img_list = np.max(all_paths, axis = 1)
-
-        num_processes, H, W, D = img_list.shape
-        num = 4
-        img_list = img_list.reshape((num_processes//num, num, H, W, D))
-        img_list = np.transpose(img_list, (0, 2, 1, 3, 4))
-        img_list = np.clip(img_list.reshape((num*H, num*W, D)), 0, 255)
-
-        # print([t.shape for t in total])
-        total = np.concatenate(total)
-        dir_name = save_dir
-        if os.path.isdir(dir_name) == False:
-            os.makedirs(dir_name)
+        # rows, columns = np.where(all_dones=True)
+        # total = []
+        # epi_length = all_dones.shape[1]
+        # total_for_img = []
+        # """only save the episodes that terminate. """
+        # # it's possible that there are two or none-dones
+        # row_record = []
+        # for (r, c) in zip(rows, columns):
+        #     if r not in row_record:
+        #         row_record.append(r)
+        #         path = np.array(all_paths[r])
+        #         done = c
+        #         path[done:] = 0
+        #         total_for_img.append(path)
+        #         total.append(path[:done+1])
+        #
+        # if len(total_for_img) < num_processes:
+        #     for _ in range(num_processes - len(total_for_img)):
+        #         total_for_img.append(np.zeros((epi_length, 200, 200, 3)))
+        #
+        # all_paths = np.array(total_for_img)
+        # # change the color of the starting point
+        # r, g, b = all_paths[:, :, :, :, 0], all_paths[:, :, :, :, 1], all_paths[:, :, :, :, 2]
+        # # get all the agent positions
+        # indices = np.logical_or(np.logical_and(r!=0, np.logical_and(g==0, b==0)), np.logical_and(b!=0, np.logical_and(g==0, r==0)))
+        # # only choose the starting point
+        # indices[:, 1:] = False
+        # ratio = r[indices].reshape((-1, 1)) + b[indices].reshape((-1, 1))
+        # all_paths[indices] += ratio * np.array([0, 1, 0]).astype(all_paths.dtype)
+        # img_list = np.max(all_paths, axis = 1)
+        #
+        # num_processes, H, W, D = img_list.shape
+        # num = 4
+        # img_list = img_list.reshape((num_processes//num, num, H, W, D))
+        # img_list = np.transpose(img_list, (0, 2, 1, 3, 4))
+        # img_list = np.clip(img_list.reshape((num*H, num*W, D)), 0, 255)
+        #
+        # # print([t.shape for t in total])
+        # total = np.concatenate(total)
+        # dir_name = save_dir
+        # if os.path.isdir(dir_name) == False:
+        #     os.makedirs(dir_name)
     elif env_name.startswith("MiniWorld"):
         all_dones = np.array(all_dones)
         rows, columns = np.where(all_dones == True)

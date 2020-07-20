@@ -13,87 +13,12 @@ class Flatten(nn.Module):
         return x.view(x.size(0), -1)
 
 
-class Policy(nn.Module):
-    def __init__(self, obs_shape, action_space, base=None, base_kwargs=None):
-        super(Policy, self).__init__()
-        if base_kwargs is None:
-            base_kwargs = {}
-        if base is None:
-            if len(obs_shape) == 3:
-                base = CNNBase
-            elif len(obs_shape) == 1:
-                base = MLPBase
-            else:
-                raise NotImplementedError
-
-        self.base = base(obs_shape[0], **base_kwargs)
-
-        if action_space.__class__.__name__ == "Discrete":
-            num_outputs = action_space.n
-            self.dist = Categorical(self.base.output_size, num_outputs)
-        elif action_space.__class__.__name__ == "Box":
-            num_outputs = action_space.shape[0]
-            self.dist = DiagGaussian(self.base.output_size, num_outputs)
-        elif action_space.__class__.__name__ == "MultiBinary":
-            num_outputs = action_space.shape[0]
-            self.dist = Bernoulli(self.base.output_size, num_outputs)
-        else:
-            raise NotImplementedError
-
-    @property
-    def is_recurrent(self):
-        return self.base.is_recurrent
-
-    @property
-    def recurrent_hidden_state_size(self):
-        """Size of rnn_hx."""
-        return self.base.recurrent_hidden_state_size
-
-    def forward(self, inputs, rnn_hxs, masks):
-        raise NotImplementedError
-
-    def act(self, inputs, rnn_hxs, masks, deterministic=False):
-        value, actor_features, rnn_hxs = self.base(inputs, rnn_hxs, masks)
-        dist = self.dist(actor_features)
-
-        if deterministic:
-            action = dist.mode()
-        else:
-            action = dist.sample()
-
-        action_log_probs = dist.log_probs(action)
-        dist_entropy = dist.entropy().mean()
-
-        return value, action, action_log_probs, rnn_hxs
-
-    def get_value(self, inputs, rnn_hxs, masks):
-        value, _, _ = self.base(inputs, rnn_hxs, masks)
-        return value
-
-    def evaluate_actions(self, inputs, rnn_hxs, masks, action):
-        value, actor_features, rnn_hxs = self.base(inputs, rnn_hxs, masks)
-        dist = self.dist(actor_features)
-
-        action_log_probs = dist.log_probs(action)
-        dist_entropy = dist.entropy().mean()
-
-        return value, action_log_probs, dist_entropy, rnn_hxs
-
-
 class NNBase(nn.Module):
     def __init__(self, recurrent, recurrent_input_size, hidden_size):
         super(NNBase, self).__init__()
 
         self._hidden_size = hidden_size
         self._recurrent = recurrent
-
-        # if recurrent:
-        #     self.gru = nn.GRU(recurrent_input_size, hidden_size)
-        #     for name, param in self.gru.named_parameters():
-        #         if 'bias' in name:
-        #             nn.init.constant_(param, 0)
-        #         elif 'weight' in name:
-        #             nn.init.orthogonal_(param)
 
     @property
     def is_recurrent(self):
@@ -293,13 +218,9 @@ class OpsPolicy(nn.Module):
         value, _, _, _ = self.base(inputs, rnn_hxs, masks, info=info)
         return value
 
-    def evaluate_actions(self, inputs, rnn_hxs, masks, action, info=None):
-        # (Pdb) inputs.shape
-        # torch.Size([2048, 147])
-        # (Pdb) rnn_hxs.shape
-        # torch.Size([4, 128])
-
-        # actor_features: [2048, 64]
+    def evaluate_actions(self, inputs, rnn_hxs, masks, action, info=None, process_rnn_hxs=False, N=None, device='cpu'):
+        if process_rnn_hxs:
+            rnn_hxs = self.process_rnn_hxs(rnn_hxs, masks, N=N, device=device)
         value, actor_features, rnn_hxs, all_hxs = self.base(inputs, rnn_hxs, masks, info=info)
         dist = self.dist(actor_features)
         action_log_probs = dist.log_probs(action)
@@ -307,6 +228,26 @@ class OpsPolicy(nn.Module):
 
         return value, action_log_probs, dist_entropy, rnn_hxs, all_hxs
 
+    def process_rnn_hxs(self, hxs, masks, N, device):
+        T = int(hxs.shape[0])
+        has_zeros = ((masks[1:] == 0.0).any(dim=-1).nonzero().squeeze().cpu())
+
+        if has_zeros.dim() == 0:
+            has_zeros = [has_zeros.item() + 1]
+        else:
+            has_zeros = (has_zeros + 1).numpy().tolist()
+
+        has_zeros = [0] + has_zeros + [T]
+        all_hxs = []
+        dim = hxs.shape[-1]
+        for i in range(len(has_zeros) - 1):
+            start_idx = has_zeros[i]
+            end_idx = has_zeros[i + 1]
+            all_hxs.append(torch.zeros((1, dim)).to(device))
+            all_hxs.append(hxs[start_idx:end_idx-1])
+
+        all_hxs = torch.cat(all_hxs, dim=0)
+        return all_hxs
 
 
 init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
@@ -354,7 +295,7 @@ class OpsCell(nn.Module):
             elif 'weight' in name:
                 nn.init.orthogonal_(param)
 
-    def forward(self, x, h, g, a):
+    def forward(self, x, h, g, a, full_hidden = False):
         # B x T x I
         # B x T x H
         # also keep another hidden state, so make h' = [h, h_persistent]
@@ -367,6 +308,8 @@ class OpsCell(nn.Module):
         # h2: longer memory
         if self.persistent:
             h1, h2 = torch.chunk(h, 2, dim = -1)
+        if full_hidden:
+            hs = [h]
 
         for t in range(g.shape[0]):
             # print(x.shape, h2.shape, h.shape)
@@ -396,9 +339,13 @@ class OpsCell(nn.Module):
 
                 outs.append(h)
                 capt.append(z1)
+            if full_hidden:
+                hs.append(h)
 
-
-        return torch.cat(outs), h, torch.cat(capt)
+        if full_hidden:
+            return torch.cat(outs), h, torch.cat(capt), torch.cat(hs)
+        else:
+            return torch.cat(outs), h, torch.cat(capt)
 
 
 class OpsBase(NNBase):
@@ -408,49 +355,37 @@ class OpsBase(NNBase):
                 resolution_scale=1.0):
         super(OpsBase, self).__init__(recurrent, num_inputs, hidden_size)
 
-        # if recurrent:
-        #     num_inputs = hidden_size
-
         self.is_leaf = is_leaf
         self.gate_input = gate_input
         self.hidden_size = hidden_size
         self.persistent = persistent
         self.resolution_scale = resolution_scale
         self.action_space = action_space
+        self.discrete_action = (action_space.__class__.__name__ == "Discrete")
 
 
-        # if len(num_inputs) == 3:
         if mode == 'cnn':
             self.cnn = self.make_cnn(in_dim=num_inputs, out_dim=hidden_size)
             num_inputs = hidden_size
 
 
         if is_leaf:
-            if action_space.__class__.__name__ == "Discrete":
+            if self.discrete_action:
                 self.act_emb = nn.Embedding(action_space.n + 1, hidden_size, padding_idx=0)
-            elif action_space.__class__.__name__ == "Box":
+            else:
                 self.act_emb = nn.Sequential(
                     init_(nn.Linear(action_space.shape[0], hidden_size)), nn.ReLU())
-            else:
-                raise NotImplementedError
-            # self.act_emb = nn.Embedding(action_space.n + 1, hidden_size, padding_idx=0)
+
             self.cell = OpsCell(num_inputs, act_dim=hidden_size, hidden_size=hidden_size, persistent=persistent)
-
-        if is_leaf:
             self.actor = nn.Sequential(
                 init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh())
 
             self.critic = nn.Sequential(
-                init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh())
-        elif self.gate_input == 'hid':
-            self.actor = nn.Sequential(
-                init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),
-                init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),)
-
-            self.critic = nn.Sequential(
-                init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),
                 init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh())
         else:
+            if self.gate_input == 'hid':
+                num_inputs = hidden_size
+
             self.actor = nn.Sequential(
                 init_(nn.Linear(num_inputs, hidden_size)), nn.Tanh(),
                 init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),)
@@ -464,26 +399,12 @@ class OpsBase(NNBase):
         self.train()
 
     def make_cnn(self, in_dim, out_dim):
-        # import kornia
         init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
                     constant_(x, 0), nn.init.calculate_gain('relu'))
 
         C, H, W = in_dim
-        out_shape = (((H - 2 -1) // 2 + 1) - 2 - 2) * (((W - 2 -1) // 2 + 1) - 2 - 2)
-        # out_shape = (((H - 2 -1) // 2 + 1) - 2) * (((W - 2 -1) // 2 + 1) - 2)
-        # # out_shape = (((H - 2 -1) // 2 + 1) ) * (((W - 2 -1) // 2 + 1) )
-        # # print(in_dim, out_dim, out_shape)
-        # encoder = nn.Sequential(
-        #     init_(nn.Conv2d(C, 32, 3, stride=2)), nn.ReLU(),
-        #     init_(nn.Conv2d(32, 64, 3, stride=1)), nn.ReLU(),
-        #     init_(nn.Conv2d(64, 32, 3, stride=1)), nn.ReLU(), Flatten(),
-        #     Flatten(),
-        #     init_(nn.Linear(32 * out_shape, out_dim)), nn.ReLU())
-
-
         # For 80x60 input
         # assert np.prod(in_dim[1:]) == 80 * 60
-        # if self.resolution_scale == 1.:
         out_shape = (((((H-4-1)//2+1-4-1)//2+1)-3-1)//2+1) * (((((W-4-1)//2+1-4-1)//2+1)-3-1)//2+1)
         encoder = nn.Sequential(
             init_(nn.Conv2d(in_dim[0], 32, kernel_size=5, stride=2)),
@@ -503,62 +424,40 @@ class OpsBase(NNBase):
             init_(nn.Linear(32 * out_shape, out_dim)),
             nn.ReLU()
         )
-        # else:
         #     import kornia
         #     H, W = int(H*self.resolution_scale), int(W*self.resolution_scale)
         #     out_shape = (((((H-4-1)//2+1-4-1)//2+1)-3-1)//2+1) * (((((W-4-1)//2+1-4-1)//2+1)-3-1)//2+1)
         #     encoder = nn.Sequential(
         #         # kornia.geometry.transform.Resize((C, H, W)),
-        #         init_(nn.Conv2d(in_dim[0], 32, kernel_size=5, stride=2)),
-        #         nn.BatchNorm2d(32),
-        #         nn.ReLU(),
-        #
-        #         init_(nn.Conv2d(32, 32, kernel_size=5, stride=2)),
-        #         nn.BatchNorm2d(32),
-        #         nn.ReLU(),
-        #
-        #         init_(nn.Conv2d(32, 32, kernel_size=4, stride=2)),
-        #         nn.BatchNorm2d(32),
-        #         nn.ReLU(),
-        #
-        #         Flatten(),
-        #
-        #         init_(nn.Linear(32 * out_shape, out_dim)),
-        #         nn.ReLU()
         #     )
 
         return encoder
 
     def forward(self, inputs, rnn_hxs, masks, info=None):
         x = inputs
-        # print(x.shape)
-        if self.resolution_scale == .5:
-            x = x[:, :, ::2, ::2]
-        elif self.resolution_scale == .25:
-            x = x[:, :, ::4, ::4]
-        # import pdb; pdb.set_trace()
         if x.ndim > 3:
             x = x/255
             x = self.cnn(x)
 
-        if info is not None and info.numel() > 0:
+        if info is not None and info.numel() > 0: #2
             # g, a = torch.split(info, 1, dim=-1)
             assert len(info.shape) == 2
             g, a = info[:, 0].unsqueeze(dim=-1), info[:, 1:]
-            if self.action_space.__class__.__name__ == "Discrete":
+            if self.discrete_action:
                 # consider embedding all observations and actions before passing to gru...
                 a = self.act_emb(a.squeeze(-1).long())
-            elif self.action_space.__class__.__name__ == "Box":
+            elif self.discrete_action:
                 a = self.act_emb(a)
 
             x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks, g, a)
 
             hidden_critic = self.critic(x)
             hidden_actor = self.actor(x)
-        else:
+        else: #1
             if self.gate_input == 'hid':
                 if self.persistent:
                     rnn_hxs, _ = torch.chunk(rnn_hxs, 2, dim = -1)
+
                 hidden_critic = self.critic(rnn_hxs)
                 hidden_actor = self.actor(rnn_hxs)
             elif not self.gate_input == 'obs':
@@ -567,9 +466,8 @@ class OpsBase(NNBase):
                 hidden_critic = self.critic(x)
                 hidden_actor = self.actor(x)
 
-
-        # [16, 1], [16, 64], [16, 128],
         return self.critic_linear(hidden_critic), hidden_actor, rnn_hxs, x
+
 
 
     def _forward_gru(self, x, hxs, masks, gate, action):
@@ -586,7 +484,7 @@ class OpsBase(NNBase):
         else:
             # x is a (T, N, -1) tensor that has been flatten to (T * N, -1)
             N = hxs.size(0)
-            T = int(x.size(0) / N)
+            T = int(x.size(0) / N) #128
 
             # unflatten
             x = x.view(T, N, x.size(1))

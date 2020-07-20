@@ -153,7 +153,7 @@ class RolloutStorage(object):
             yield obs_batch, recurrent_hidden_states_batch, actions_batch, \
                 value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ
 
-    def recurrent_generator(self, advantages, num_mini_batch):
+    def recurrent_generator(self, advantages, num_mini_batch, full_hidden=False):
         num_processes = self.rewards.size(1)
         assert num_processes >= num_mini_batch, (
             "PPO requires the number of processes ({}) "
@@ -176,8 +176,12 @@ class RolloutStorage(object):
                 ind = perm[start_ind + offset]
 
                 obs_batch.append(self.obs[:-1, ind])
-                recurrent_hidden_states_batch.append(
-                    self.recurrent_hidden_states[0:1, ind])
+                if full_hidden:
+                    recurrent_hidden_states_batch.append(
+                        self.recurrent_hidden_states[:-1, ind])
+                else:
+                    recurrent_hidden_states_batch.append(
+                        self.recurrent_hidden_states[0:1, ind])
 
                 actions_batch.append(self.actions[:, ind])
                 infos_batch.append(self.info[:, ind])
@@ -205,8 +209,14 @@ class RolloutStorage(object):
             adv_targ = torch.stack(adv_targ, 1)
 
             # States is just a (N, -1) tensor
-            recurrent_hidden_states_batch = torch.stack(
-                recurrent_hidden_states_batch, 1).view(N, -1)
+            if full_hidden:
+                recurrent_hidden_states_batch = torch.stack(
+                    recurrent_hidden_states_batch, 1)
+                recurrent_hidden_states_batch = _flatten_helper(T, N, recurrent_hidden_states_batch) #2048, 128
+                
+            else:
+                recurrent_hidden_states_batch = torch.stack(
+                    recurrent_hidden_states_batch, 1).view(N, -1)
 
             # Flatten the (T, N, ...) tensors to (T * N, ...)
             obs_batch = _flatten_helper(T, N, obs_batch)

@@ -32,7 +32,7 @@ class PPO():
 
         self.optimizer = optim.Adam(actor_critic.parameters(), lr=lr, eps=eps)
 
-    def update(self, rollouts, pred_loss=False):
+    def update(self, rollouts, pred_loss=False, full_hidden=False, num_processes=16, device='cpu'):
         advantages = rollouts.returns[:-1] - rollouts.value_preds[:-1]
         advantages = (advantages - advantages.mean()) / (
             advantages.std() + 1e-5)
@@ -44,7 +44,7 @@ class PPO():
         for e in range(self.ppo_epoch):
             if self.actor_critic.is_recurrent:
                 data_generator = rollouts.recurrent_generator(
-                    advantages, self.num_mini_batch)
+                    advantages, self.num_mini_batch, full_hidden=full_hidden)
             else:
                 data_generator = rollouts.feed_forward_generator(
                     advantages, self.num_mini_batch)
@@ -57,7 +57,8 @@ class PPO():
                 # Reshape to do in a single forward pass for all steps
                 values, action_log_probs, dist_entropy, rnn_hxs, all_hxs = self.actor_critic.evaluate_actions(
                     obs_batch, recurrent_hidden_states_batch, masks_batch,
-                    actions_batch, info=infos_batch)
+                    actions_batch, info=infos_batch, process_rnn_hxs=full_hidden, N=num_processes//self.num_mini_batch,
+                    device=device)
 
                 ratio = torch.exp(action_log_probs -
                                   old_action_log_probs_batch)
@@ -80,7 +81,9 @@ class PPO():
                  dist_entropy * self.entropy_coef
 
                 if pred_loss:
-                    gate, _ = torch.split(infos_batch, 1, dim=-1)
+                    assert len(infos_batch.shape) == 2
+                    gate = infos_batch[:, 0].unsqueeze(dim=-1)
+                    # gate, _ = torch.split(infos_batch, 1, dim=-1)
                     gate = gate.squeeze().bool()
 
                     with torch.no_grad():
@@ -91,7 +94,7 @@ class PPO():
                         if self.actor_critic.base.persistent:
                             # torch.Size([1026, 128]) torch.Size([128])
                             # TODO: fix it
-                            return 
+                            return
                             h1, h2 = torch.chunk(rnn_hxs, 2, dim = -1)
                             print(obs_batch[gate].shape, h2[0].shape)
                             capts = self.actor_critic.base.cell.capture(torch.cat((obs_batch[gate], h2[0]), dim = -1))
