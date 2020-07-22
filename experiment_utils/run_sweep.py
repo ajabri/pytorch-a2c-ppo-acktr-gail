@@ -36,6 +36,10 @@ def run_sweep(run_experiment, sweep_params, exp_name, instance_type='c4.xlarge')
     parser.add_argument('--python_cmd', type=str, default="python",
                         help='python coomand')
 
+    parser.add_argument('--use_gpu', type=bool, default=False,
+                        help='whether use cuda or not')
+
+
     args = parser.parse_args(sys.argv[1:])
 
     local_mount = mount.MountLocal(local_dir=config.BASE_DIR, pythonpath=True)
@@ -62,7 +66,7 @@ def run_sweep(run_experiment, sweep_params, exp_name, instance_type='c4.xlarge')
             image=sweeper.image,
         )
         run_sweep_doodad(run_experiment, sweep_params, run_mode=mode_docker, python_cmd=args.python_cmd,
-                         mounts=sweeper.mounts)
+                         mounts=sweeper.mounts, use_gpu=args.use_gpu)
 
     elif args.mode == 'local':
         sweeper.run_sweep_serial(run_experiment, sweep_params)

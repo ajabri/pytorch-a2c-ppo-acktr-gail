@@ -116,7 +116,7 @@ def main(**kwargs):
             recurrent_hidden_size = actor_critic.recurrent_hidden_state_size
 
         rollouts = RolloutStorage(kwargs['num_steps'], kwargs['num_processes'],
-                                    envs.observation_space.shape, envs.action_space,
+                                    scaled_obs_shape, envs.action_space,
                                     recurrent_hidden_size,
                                     info_size=info_size if is_leaf else 0, action_shape=action_dim)
 
@@ -167,7 +167,6 @@ def main(**kwargs):
             if kwargs['always_zero']:
                 action1 = torch.zeros(action1.shape).to(device).long()
 
-            # import pdb; pdb.set_trace()
             if discrete_action:
                 last_action = rollouts[1].actions[step-1] + 1
             else:
@@ -287,14 +286,13 @@ def main(**kwargs):
                     # wandb_lunarlander(capt, pred)
                     logging.wandb_minigrid(capt, pred)
 
-            if j % kwargs['gif_save_interval'] == 0 and kwargs['env_name'].startswith("Mini"):
-                # only do visualization for mini environments
-                img_list = save_gif(actor_critic, kwargs['env_name'], kwargs['seed'],
-                             kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
-                             persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
-                             resolution_scale = kwargs['scale'])
-                if not kwargs['debug']:
-                    wandb.log({"visualization %s" % j: wandb.Image(img_list)})
+            # if j % kwargs['gif_save_interval'] == 0:
+            #     img_list = save_gif(actor_critic, kwargs['env_name'], kwargs['seed'],
+            #                  kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
+            #                  persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
+            #                  resolution_scale = kwargs['scale'])
+            #     if not kwargs['debug']:
+            #         wandb.log({"visualization %s" % j: wandb.Image(img_list)})
 
 
             if not kwargs['debug']:
@@ -319,7 +317,7 @@ def main(**kwargs):
 if __name__ == "__main__":
     sweep_params = {
         'algo': ['ppo'],
-        'seed': [111],
+        'seed': [111, 222],
         # 'env_name': ['MiniWorld-YMaze-v0'],
         'env_name': ['CarRacing-v0'],
         # 'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
@@ -339,18 +337,18 @@ if __name__ == "__main__":
         'num_env_steps': [50000000],
         'bonus1': [0],
         # 'bonus3': [0.2],
-        'cuda': [True],
+        'cuda': [False],
         'proj_name': ['debug-car'],
         'gif_save_interval': [30],
         'note': [''],
-        'debug': [False],
+        'debug': [True],
         'gate_input': ['hid'], #'obs' | 'hid'
         'partial_obs': [False],
         'persistent': [True],
-        'scale': [1],
+        'scale': [.4],
         'hidden_size': [128],
         'always_zero': [False],
-        'pred_loss': [True],
+        'pred_loss': [True, False],
         }
 
     run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)

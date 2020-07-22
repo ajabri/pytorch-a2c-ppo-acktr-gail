@@ -57,10 +57,8 @@ def save_gif(actor_critic,
 
     dicrete_action = (eval_envs.action_space.__class__.__name__ == "Discrete")
     while len(eval_episode_rewards) < 16: #increase it so that now all the episodes termiante
-        # print(len(eval_episode_rewards))
         value1, action1, action_log_prob1, recurrent_hidden_states1 = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
 
-        # TODO make sure the last index of actions is the right hting to do
         if always_zero:
             action1 = torch.zeros(action1.shape).to(device).long()
 
@@ -70,7 +68,8 @@ def save_gif(actor_critic,
         if dicrete_action:
             last_action = 1 + action2
         else:
-            last_action = action2
+            last_action = action2.float()
+            action1 = action1.float()
 
         value2, action2, action_log_prob2, recurrent_hidden_states2 = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
             info=torch.cat([action1, last_action], dim=1))
@@ -81,26 +80,29 @@ def save_gif(actor_critic,
         obs, reward, done, infos = eval_envs.step(action)
 
         imgs = np.array(eval_envs.full_obs())
-        gate = action1.byte().squeeze()
+        if action1.shape[-1] > 1:
+            gate = action1[:, 0].byte().squeeze()
+        else:
+            gate = action1.byte().squeeze()
         if gate.is_cuda:
             gate = gate.reshape((-1, 1, 1, 1)).cpu().data.numpy()
         else:
             gate = gate.reshape((-1, 1, 1, 1)).data.numpy()
         imgs = imgs[:, 0] * gate + imgs[:, 1] * (1-gate)
 
-        if env_name.startswith("MiniWorld"):
-            # print(obs.shape, imgs.shape) [16, 12, 60, 80] (16, 60, 80, 3)
-            for (ob, im, paths, d, dones, top_view) in zip(obs, imgs, all_paths, done, all_dones, all_top_views):
-                if ob.is_cuda:
-                    paths.append(ob[:3].cpu().detach().numpy())
-                else:
-                    paths.append(ob[:3].detach().numpy())
-                dones.append(d)
-                top_view.append(im)
-        else:
-            for (im, paths, d, dones) in zip(imgs, all_paths, done, all_dones):
-                paths.append(im)
-                dones.append(d)
+        # if env_name.startswith("MiniWorld"):
+        #     # print(obs.shape, imgs.shape) [16, 12, 60, 80] (16, 60, 80, 3)
+        #     for (im, paths, d, dones, top_view) in zip(imgs, all_paths, done, all_dones, all_top_views):
+        #         if ob.is_cuda:
+        #             paths.append(ob[:3].cpu().detach().numpy())
+        #         else:
+        #             paths.append(ob[:3].detach().numpy())
+        #         dones.append(d)
+        #         top_view.append(im)
+        # else:
+        for (im, paths, d, dones) in zip(imgs, all_paths, done, all_dones):
+            paths.append(im[:3])
+            dones.append(d)
 
 
         eval_masks = torch.tensor(
@@ -206,13 +208,61 @@ def save_gif(actor_critic,
         dir_name = save_dir
         if os.path.isdir(dir_name) == False:
             os.makedirs(dir_name)
+    else:
+        all_dones = np.array(all_dones)
+        rows, columns = np.where(all_dones == True)
+        total = []
+        epi_length = all_dones.shape[1]
+        total_for_img = []
+        """only save the episodes that terminate. """
+        # it's possible that there are two or none-dones
+        row_record = []
 
-    print(img_list.shape, total[0].shape, len(total))
+        for i in range(num_processes):
+            row_record.append(i)
+            if i in rows: #if at least one of the episodes in this process terminates
+                idx = np.where(rows == i)[0][0]
+                r, done = i, columns[idx]
+                path = np.array(all_paths[r])
+                path[done+1:] = 0
+                total.append(path[:done+1])
+                # total.append(path[:done])
+            else:
+                total.append(all_paths[i])
+            _, D, H, W = obs.shape
+            total.append(np.zeros((D, H, W)))
+
+    if env_name.startswith("Mini"):
+        all_paths = np.array(total_for_img)
+        # change the color of the starting point
+        r, g, b = all_paths[:, :, :, :, 0], all_paths[:, :, :, :, 1], all_paths[:, :, :, :, 2]
+        # get all the agent positions
+        indices = np.logical_or(np.logical_and(r!=0, np.logical_and(g==0, b==0)), np.logical_and(b!=0, np.logical_and(g==0, r==0)))
+        # only choose the starting point
+        indices[:, 1:] = False
+        ratio = r[indices].reshape((-1, 1)) + b[indices].reshape((-1, 1))
+        all_paths[indices] += ratio * np.array([0, 1, 0]).astype(all_paths.dtype)
+        img_list = np.max(all_paths, axis = 1)
+
+        num_processes, H, W, D = img_list.shape
+        num = 4
+        img_list = img_list.reshape((num_processes//num, num, H, W, D))
+        img_list = np.transpose(img_list, (0, 2, 1, 3, 4))
+        img_list = np.clip(img_list.reshape((num*H, num*W, D)), 0, 255)
+
+    # print([t.shape for t in total])
+    total = np.concatenate(total)
+    total = np.transpose(total, (0, 2, 3, 1))
+    dir_name = save_dir
+    if os.path.isdir(dir_name) == False:
+        os.makedirs(dir_name)
+
     imageio.mimsave(dir_name + '/bouns-' + str(bonus1) + '-epoch-'+ str(epoch) + '-seed-'+ str(seed) + '.gif', total, duration=0.5)
     # if np.sum(columns) != 16 * 39:
     # cv2.imwrite(dir_name + '/img.png', img_list)
     # print("img saved to", dir_name + '/img.png')
     print(".GIF files saved to", dir_name)
+    st()
 
     eval_envs.close()
     return img_list
