@@ -38,7 +38,8 @@ class RolloutStorage(object):
         self.step = 0
 
     def to(self, device):
-        self.obs = self.obs.to(device)
+        self.obs = self.obs
+        # .to(device)
         self.recurrent_hidden_states = self.recurrent_hidden_states.to(device)
         self.rewards = self.rewards.to(device)
         self.value_preds = self.value_preds.to(device)
@@ -164,6 +165,7 @@ class RolloutStorage(object):
         for start_ind in range(0, num_processes, num_envs_per_batch):
             obs_batch = []
             recurrent_hidden_states_batch = []
+            full_recurrent_hidden_states_batch = []
             actions_batch = []
             value_preds_batch = []
             return_batch = []
@@ -177,11 +179,11 @@ class RolloutStorage(object):
 
                 obs_batch.append(self.obs[:-1, ind])
                 if full_hidden:
-                    recurrent_hidden_states_batch.append(
+                    full_recurrent_hidden_states_batch.append(
                         self.recurrent_hidden_states[:-1, ind])
-                else:
-                    recurrent_hidden_states_batch.append(
-                        self.recurrent_hidden_states[0:1, ind])
+
+                recurrent_hidden_states_batch.append(
+                    self.recurrent_hidden_states[0:1, ind])
 
                 actions_batch.append(self.actions[:, ind])
                 infos_batch.append(self.info[:, ind])
@@ -210,13 +212,12 @@ class RolloutStorage(object):
 
             # States is just a (N, -1) tensor
             if full_hidden:
-                recurrent_hidden_states_batch = torch.stack(
-                    recurrent_hidden_states_batch, 1)
-                recurrent_hidden_states_batch = _flatten_helper(T, N, recurrent_hidden_states_batch) #2048, 128
-                
-            else:
-                recurrent_hidden_states_batch = torch.stack(
-                    recurrent_hidden_states_batch, 1).view(N, -1)
+                full_recurrent_hidden_states_batch = torch.stack(
+                    full_recurrent_hidden_states_batch, 1)
+                full_recurrent_hidden_states_batch = _flatten_helper(T, N, full_recurrent_hidden_states_batch) #2048, 128
+
+            recurrent_hidden_states_batch = torch.stack(
+                recurrent_hidden_states_batch, 1).view(N, -1)
 
             # Flatten the (T, N, ...) tensors to (T * N, ...)
             obs_batch = _flatten_helper(T, N, obs_batch)
@@ -232,4 +233,4 @@ class RolloutStorage(object):
             adv_targ = _flatten_helper(T, N, adv_targ)
 
             yield obs_batch, recurrent_hidden_states_batch, actions_batch, infos_batch, \
-                value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ
+                value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ, full_recurrent_hidden_states_batch

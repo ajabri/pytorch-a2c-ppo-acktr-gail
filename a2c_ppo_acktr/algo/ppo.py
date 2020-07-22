@@ -52,13 +52,23 @@ class PPO():
             for sample in data_generator:
                 obs_batch, recurrent_hidden_states_batch, actions_batch, infos_batch, \
                    value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, \
-                        adv_targ = sample
+                        adv_targ, full_recurrent_hidden_states_batch = sample
+
+                obs_batch = obs_batch.to(device)
 
                 # Reshape to do in a single forward pass for all steps
-                values, action_log_probs, dist_entropy, rnn_hxs, all_hxs = self.actor_critic.evaluate_actions(
-                    obs_batch, recurrent_hidden_states_batch, masks_batch,
-                    actions_batch, info=infos_batch, process_rnn_hxs=full_hidden, N=num_processes//self.num_mini_batch,
-                    device=device)
+                if full_hidden and not self.actor_critic.base.is_leaf: #for pi_1
+                    print("updating pi_1")
+                    values, action_log_probs, dist_entropy, rnn_hxs, all_hxs = self.actor_critic.evaluate_actions(
+                        obs_batch, full_recurrent_hidden_states_batch, masks_batch,
+                        actions_batch, info=infos_batch, process_rnn_hxs=full_hidden, N=num_processes//self.num_mini_batch,
+                        device=device)
+                else:
+                    print("updating pi_2")
+                    values, action_log_probs, dist_entropy, rnn_hxs, all_hxs = self.actor_critic.evaluate_actions(
+                        obs_batch, recurrent_hidden_states_batch, masks_batch,
+                        actions_batch, info=infos_batch, process_rnn_hxs=False, N=num_processes//self.num_mini_batch,
+                        device=device)
 
                 ratio = torch.exp(action_log_probs -
                                   old_action_log_probs_batch)
@@ -80,7 +90,7 @@ class PPO():
                 total_loss = value_loss * self.value_loss_coef + action_loss - \
                  dist_entropy * self.entropy_coef
 
-                if pred_loss:
+                if pred_loss: #only for pi_2
                     assert len(infos_batch.shape) == 2
                     gate = infos_batch[:, 0].unsqueeze(dim=-1)
                     # gate, _ = torch.split(infos_batch, 1, dim=-1)
@@ -88,16 +98,16 @@ class PPO():
 
                     with torch.no_grad():
                         # currenlt only works for non-perminant memory
-                        if obs_batch.ndim > 3:
+                        if obs_batch.ndim > 3 and self.actor_critic.base.gate_input != 'hid':
                             obs_batch = obs_batch/255
                             obs_batch = self.actor_critic.base.cnn(obs_batch)
                         if self.actor_critic.base.persistent:
                             # torch.Size([1026, 128]) torch.Size([128])
                             # TODO: fix it
-                            return
-                            h1, h2 = torch.chunk(rnn_hxs, 2, dim = -1)
-                            print(obs_batch[gate].shape, h2[0].shape)
-                            capts = self.actor_critic.base.cell.capture(torch.cat((obs_batch[gate], h2[0]), dim = -1))
+                            full_hxs = self.actor_critic.process_rnn_hxs(full_recurrent_hidden_states_batch, masks_batch, N=num_processes//self.num_mini_batch, device=device)
+                            h1, h2 = torch.chunk(full_hxs, 2, dim = -1)
+                            capts = self.actor_critic.base.cell.capture(torch.cat((obs_batch[gate], h2[gate]), dim = -1))
+                            capts, _ = torch.chunk(capts, 2, dim = -1)
                         else:
                             capts = self.actor_critic.base.cell.capture(obs_batch[gate])
 

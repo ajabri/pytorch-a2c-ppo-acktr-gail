@@ -56,7 +56,7 @@ def save_gif(actor_critic,
     all_dones = [[] for _ in range(num_processes)]
 
     dicrete_action = (eval_envs.action_space.__class__.__name__ == "Discrete")
-    while len(eval_episode_rewards) < 10:
+    while len(eval_episode_rewards) < 16: #increase it so that now all the episodes termiante
         # print(len(eval_episode_rewards))
         value1, action1, action_log_prob1, recurrent_hidden_states1 = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
 
@@ -180,6 +180,7 @@ def save_gif(actor_critic,
                 total_for_img.append(path)
             else:
                 total_for_img.append(all_top_views[i])
+
 
 
         all_paths = np.array(total_for_img)

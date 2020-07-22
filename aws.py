@@ -86,7 +86,7 @@ def main(**kwargs):
             base_kwargs=dict(
                 recurrent=True,
                 partial_obs=kwargs['partial_obs'],
-                gate_input=kwargs['gate_input'],
+                gate_input='obs' if is_leaf else kwargs['gate_input'],
                 hidden_size=kwargs['hidden_size'],
                 resolution_scale= 1 if kwargs['env_name'].startswith("MiniWorld") else kwargs['scale'],
                 persistent=kwargs['persistent']),
@@ -145,7 +145,7 @@ def main(**kwargs):
     def act(i, step, **kwargs):
         with torch.no_grad():
             value, action, action_log_prob, recurrent_hidden_states = actor_critic[i].act(
-                rollouts[i].obs[step], rollouts[i].recurrent_hidden_states[step],
+                rollouts[i].obs[step].to(device), rollouts[i].recurrent_hidden_states[step],
                 rollouts[i].masks[step], **kwargs)
 
             return value, action, action_log_prob, recurrent_hidden_states
@@ -207,14 +207,14 @@ def main(**kwargs):
         def update(i, info=None):
             with torch.no_grad():
                 next_value = actor_critic[i].get_value(
-                    rollouts[i].obs[-1], rollouts[i].recurrent_hidden_states[-1],
+                    rollouts[i].obs[-1].to(device), rollouts[i].recurrent_hidden_states[-1],
                     rollouts[i].masks[-1], info=info).detach()
 
             rollouts[i].compute_returns(next_value, kwargs['use_gae'], kwargs['gamma'],
                                     kwargs['gae_lambda'], kwargs['use_proper_time_limits'])
 
-            full_hidden = ((i==0) and (kwargs['gate_input'] == 'hid'))
             pred_loss = ((i!=0) and (kwargs['pred_loss']))
+            full_hidden = ((i==0) and (kwargs['gate_input'] == 'hid')) or (pred_loss and kwargs['persistent'])
             value_loss, action_loss, dist_entropy, pred_err = agent[i].update(rollouts[i],
                 pred_loss=pred_loss, full_hidden=full_hidden, num_processes=kwargs['num_processes'],
                 device=device)
@@ -229,11 +229,15 @@ def main(**kwargs):
         if (j % 2) == 1 or True:
             print("updating agent 1")
             _, action1, _, _ = actor_critic[0].act(
-                    rollouts[0].obs[-1], rollouts[0].recurrent_hidden_states[-1],
+                    rollouts[0].obs[-1].to(device), rollouts[0].recurrent_hidden_states[-1],
                     rollouts[0].masks[-1])
 
-            value_loss2, action_loss2, dist_entropy2, pred_err2 = update(1,
-                info=torch.cat([action1, rollouts[1].actions[-1]+1 ], dim=-1))
+            if discrete_action:
+                value_loss2, action_loss2, dist_entropy2, pred_err2 = update(1,
+                    info=torch.cat([action1, rollouts[1].actions[-1]+1 ], dim=-1))
+            else:
+                value_loss2, action_loss2, dist_entropy2, pred_err2 = update(1,
+                    info=torch.cat([action1.float(), rollouts[1].actions[-1]+1 ], dim=-1))
 
 
         # save for every interval-th episode or for the last epoch
@@ -315,11 +319,11 @@ def main(**kwargs):
 if __name__ == "__main__":
     sweep_params = {
         'algo': ['ppo'],
-        'seed': [333],
+        'seed': [111],
         # 'env_name': ['MiniWorld-YMaze-v0'],
-        # 'env_name': ['CarRacing-v0'],
+        'env_name': ['CarRacing-v0'],
         # 'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
-        'env_name': ['MiniWorld-FourRooms-v0'],
+        # 'env_name': ['MiniWorld-FourRooms-v0'],
 
         'use_gae': [True],
         'lr': [2.5e-4],
@@ -331,7 +335,6 @@ if __name__ == "__main__":
         'num_mini_batch': [4],
         'log_interval': [1],
         'use_linear_lr_decay': [True],
-        # 'entropy_coef': [0.005],
         'entropy_coef': [0.01],
         'num_env_steps': [50000000],
         'bonus1': [0],
@@ -340,10 +343,10 @@ if __name__ == "__main__":
         'proj_name': ['debug-car'],
         'gif_save_interval': [30],
         'note': [''],
-        'debug': [True],
+        'debug': [False],
         'gate_input': ['hid'], #'obs' | 'hid'
         'partial_obs': [False],
-        'persistent': [False],
+        'persistent': [True],
         'scale': [1],
         'hidden_size': [128],
         'always_zero': [False],

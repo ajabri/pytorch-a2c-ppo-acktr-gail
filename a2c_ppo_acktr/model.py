@@ -299,8 +299,6 @@ class OpsCell(nn.Module):
         # B x T x I
         # B x T x H
         # also keep another hidden state, so make h' = [h, h_persistent]
-        T, B, H = x.shape
-
         outs = []
         capt = []
 
@@ -435,7 +433,8 @@ class OpsBase(NNBase):
 
     def forward(self, inputs, rnn_hxs, masks, info=None):
         x = inputs
-        if x.ndim > 3:
+
+        if x.ndim > 3 and self.gate_input != 'hid':
             x = x/255
             x = self.cnn(x)
 
@@ -446,7 +445,7 @@ class OpsBase(NNBase):
             if self.discrete_action:
                 # consider embedding all observations and actions before passing to gru...
                 a = self.act_emb(a.squeeze(-1).long())
-            elif self.discrete_action:
+            else:
                 a = self.act_emb(a)
 
             x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks, g, a)
@@ -515,6 +514,8 @@ class OpsBase(NNBase):
             hxs = hxs.unsqueeze(0)
             outputs = []
             capts = []
+            # hxs: [1, 4, 256]
+            # masks: [512, 4]
             for i in range(len(has_zeros) - 1):
                 # We can now process steps that don't have any zeros in masks together!
                 # This is much faster
@@ -523,7 +524,7 @@ class OpsBase(NNBase):
 
                 rnn_scores, hxs, capt = self.cell(
                     x[start_idx:end_idx],
-                    hxs * masks[start_idx].view(1, -1, 1),
+                    hxs * masks[start_idx].view(1, -1, 1), # [1, 4, 256]
                     gate[start_idx:end_idx] * masks[start_idx:end_idx, ..., None],
                     action[start_idx:end_idx] * masks[start_idx:end_idx, ..., None],
                     )
