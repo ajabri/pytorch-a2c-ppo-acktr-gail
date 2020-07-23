@@ -109,7 +109,7 @@ class DockerMode(LaunchMode):
             extra_args += ' -d '  # detach is optional
         if use_tty:
             if use_gpu:
-                docker_prefix = 'docker run %s -ti %s --gpus all /bin/bash -c ' % (extra_args, self.docker_image)
+                docker_prefix = 'docker run %s -ti --gpus all %s  /bin/bash -c ' % (extra_args, self.docker_image)
             else:
                 docker_prefix = 'docker run %s -ti %s /bin/bash -c ' % (extra_args, self.docker_image)
         else:
@@ -140,9 +140,9 @@ class LocalDocker(DockerMode):
             else:
                 raise NotImplementedError(type(mount))
         from pdb import set_trace as st
-        st()
         full_cmd = self.get_docker_cmd(cmd, extra_args=mnt_args, pythonpath=py_path,
                 checkpoint=self.checkpoints, use_gpu=use_gpu)
+        
         if verbose:
             print(full_cmd)
         call_and_wait(full_cmd, dry=dry)
