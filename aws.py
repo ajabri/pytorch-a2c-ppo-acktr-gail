@@ -36,7 +36,7 @@ class ClassEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 INSTANCE_TYPE = 'c4.4xlarge'
-EXP_NAME = 'async/debug-four-room'
+EXP_NAME = 'async/debug-car-racing'
 
 def main(**kwargs):
     args = get_args()
@@ -70,7 +70,7 @@ def main(**kwargs):
 
     torch.set_num_threads(1)
     envs = make_vec_envs(kwargs['env_name'], kwargs['seed'], kwargs['num_processes'],
-                         kwargs['gamma'], log_dir, device, False, resolution_scale=kwargs['scale'])
+                         kwargs['gamma'], log_dir, device, False, resolution_scale=kwargs['scale'], image_stack=kwargs['image_stack'])
 
     flip, flip1 = False, False
     discrete_action = envs.action_space.__class__.__name__ == "Discrete"
@@ -240,8 +240,7 @@ def main(**kwargs):
 
 
         # save for every interval-th episode or for the last epoch
-        if (j % kwargs['save_interval'] == 0
-                or j == num_updates - 1) and kwargs['save_dir'] != "":
+        if (j % kwargs['save_interval'] == 0 or j == num_updates - 1) and kwargs['save_dir'] != "":
             save_path = os.path.join(kwargs['save_dir'], kwargs['algo'])
             try:
                 os.makedirs(save_path)
@@ -286,14 +285,6 @@ def main(**kwargs):
                     # wandb_lunarlander(capt, pred)
                     logging.wandb_minigrid(capt, pred)
 
-            # if j % kwargs['gif_save_interval'] == 0:
-            #     img_list = save_gif(actor_critic, kwargs['env_name'], kwargs['seed'],
-            #                  kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
-            #                  persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
-            #                  resolution_scale = kwargs['scale'])
-            #     if not kwargs['debug']:
-            #         wandb.log({"visualization %s" % j: wandb.Image(img_list)})
-
 
             if not kwargs['debug']:
                 if (j % 2) == 0 or True:
@@ -307,11 +298,19 @@ def main(**kwargs):
 
                 wandb.log(dict(mean_gt=rollouts[0].actions.float().mean().item()))
 
-        if (kwargs['eval_interval'] is not None and len(episode_rewards) > 1
-                and j % kwargs['eval_interval'] == 0):
-            ob_rms = utils.get_vec_normalize(envs).ob_rms
-            evaluate(actor_critic, ob_rms, kwargs['env_name'], kwargs['seed'],
-                     kwargs['num_processes'], eval_log_dir, device)
+        # if (kwargs['eval_interval'] is not None and len(episode_rewards) > 1
+        #         and j % kwargs['eval_interval'] == 0):
+        #     ob_rms = utils.get_vec_normalize(envs).ob_rms
+        #     evaluate(actor_critic, ob_rms, kwargs['env_name'], kwargs['seed'],
+        #              kwargs['num_processes'], eval_log_dir, device)
+        #             print(j, kwargs['gif_save_interval'])
+        if j % kwargs['gif_save_interval'] == 0:
+            img_list = save_gif(actor_critic, kwargs['env_name'], kwargs['seed'],
+                         kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
+                         persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
+                         resolution_scale = kwargs['scale'], image_stack=kwargs['image_stack'])
+            if not kwargs['debug'] and kwargs['env_name'].startswith("Mini"):
+                wandb.log({"visualization %s" % j: wandb.Image(img_list)})
 
 
 if __name__ == "__main__":
@@ -335,20 +334,22 @@ if __name__ == "__main__":
         'use_linear_lr_decay': [True],
         'entropy_coef': [0.01],
         'num_env_steps': [50000000],
-        'bonus1': [0],
+        'bonus1': [0.01],
         # 'bonus3': [0.2],
         'cuda': [False],
         'proj_name': ['debug-car'],
         'gif_save_interval': [30],
         'note': [''],
-        'debug': [True],
+        'debug': [False],
         'gate_input': ['hid'], #'obs' | 'hid'
         'partial_obs': [False],
         'persistent': [True],
         'scale': [.4],
         'hidden_size': [128],
         'always_zero': [False],
-        'pred_loss': [True, False],
+        'pred_loss': [False, True],
+        'image_stack': [False],
+        'save_dir': [''],
         }
 
     run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)

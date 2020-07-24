@@ -142,7 +142,7 @@ class LocalDocker(DockerMode):
         from pdb import set_trace as st
         full_cmd = self.get_docker_cmd(cmd, extra_args=mnt_args, pythonpath=py_path,
                 checkpoint=self.checkpoints, use_gpu=use_gpu)
-        
+
         if verbose:
             print(full_cmd)
         call_and_wait(full_cmd, dry=dry)
@@ -288,7 +288,7 @@ class EC2SpotDocker(DockerMode):
     def make_timekey(self):
         return '%d'%(int(time.time()*1000))
 
-    def launch_command(self, main_cmd, mount_points=None, dry=False, verbose=False):
+    def launch_command(self, main_cmd, mount_points=None, dry=False, verbose=False, use_gpu=False):
         default_config = dict(
             image_id=self.image_id,
             instance_type=self.instance_type,

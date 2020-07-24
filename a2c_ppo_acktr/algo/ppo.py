@@ -58,13 +58,11 @@ class PPO():
 
                 # Reshape to do in a single forward pass for all steps
                 if full_hidden and not self.actor_critic.base.is_leaf: #for pi_1
-                    print("updating pi_1")
                     values, action_log_probs, dist_entropy, rnn_hxs, all_hxs = self.actor_critic.evaluate_actions(
                         obs_batch, full_recurrent_hidden_states_batch, masks_batch,
                         actions_batch, info=infos_batch, process_rnn_hxs=full_hidden, N=num_processes//self.num_mini_batch,
                         device=device)
                 else:
-                    print("updating pi_2")
                     values, action_log_probs, dist_entropy, rnn_hxs, all_hxs = self.actor_critic.evaluate_actions(
                         obs_batch, recurrent_hidden_states_batch, masks_batch,
                         actions_batch, info=infos_batch, process_rnn_hxs=False, N=num_processes//self.num_mini_batch,
