@@ -50,9 +50,9 @@ def main(**kwargs):
         torch.cuda.manual_seed_all(kwargs['seed'])
     device = torch.device("cuda:0" if kwargs['cuda'] else "cpu")
 
-    # if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
-    #     torch.backends.cudnn.benchmark = False
-    #     torch.backends.cudnn.deterministic = True
+    if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
 
     # log_dir = os.path.expanduser(kwargs['log_dir'])
     exp_dir = os.getcwd() + '/data/' + EXP_NAME
@@ -298,25 +298,19 @@ def main(**kwargs):
 
                 wandb.log(dict(mean_gt=rollouts[0].actions.float().mean().item()))
 
-        # if (kwargs['eval_interval'] is not None and len(episode_rewards) > 1
-        #         and j % kwargs['eval_interval'] == 0):
-        #     ob_rms = utils.get_vec_normalize(envs).ob_rms
-        #     evaluate(actor_critic, ob_rms, kwargs['env_name'], kwargs['seed'],
-        #              kwargs['num_processes'], eval_log_dir, device)
-        #             print(j, kwargs['gif_save_interval'])
         if j % kwargs['gif_save_interval'] == 0:
             img_list = save_gif(actor_critic, kwargs['env_name'], kwargs['seed'],
                          kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
                          persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
                          resolution_scale = kwargs['scale'], image_stack=kwargs['image_stack'])
-            if not kwargs['debug'] and kwargs['env_name'].startswith("Mini"):
-                wandb.log({"visualization %s" % j: wandb.Image(img_list)})
+            # if not kwargs['debug'] and kwargs['env_name'].startswith("Mini"):
+            #     wandb.log({"visualization %s" % j: wandb.Image(img_list)})
 
 
 if __name__ == "__main__":
     sweep_params = {
         'algo': ['ppo'],
-        'seed': [111, 222],
+        'seed': [111],
         # 'env_name': ['MiniWorld-YMaze-v0'],
         'env_name': ['CarRacing-v0'],
         # 'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
@@ -336,18 +330,18 @@ if __name__ == "__main__":
         'num_env_steps': [50000000],
         'bonus1': [0.01],
         # 'bonus3': [0.2],
-        'cuda': [False],
-        'proj_name': ['debug-car'],
+        'cuda': [True],
+        'proj_name': ['debug-car2'],
         'gif_save_interval': [30],
         'note': [''],
         'debug': [False],
         'gate_input': ['hid'], #'obs' | 'hid'
         'partial_obs': [False],
         'persistent': [True],
-        'scale': [.4],
+        'scale': [1],
         'hidden_size': [128],
         'always_zero': [False],
-        'pred_loss': [False, True],
+        'pred_loss': [False],
         'image_stack': [False],
         'save_dir': [''],
         }
