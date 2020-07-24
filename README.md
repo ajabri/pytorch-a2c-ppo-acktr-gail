@@ -6,7 +6,11 @@ things added: everything in experiment_utils/ and aws.py
 If not installed yet, [set up](https://docs.docker.com/install/) docker on your machine.
 Pull our docker container ``vioichigo/async`` from docker-hub:
 ```
-docker pull vioichigo/async:latest
+docker pull vioichigo/async:latest3
+```
+or if you want to use gpu
+```
+docker pull vioichigo/async:cuda
 ```
 All the necessary dependencies are already installed inside the docker container.
 
@@ -35,7 +39,7 @@ Install the extra package requirements for doodad
 cd doodad && pip install -r requirements.txt
 ```
 Modifications: 
-Modify ``cd doodad/scripts/run_experiment_lite_doodad.py``, add ``if __name__ == '__main__'`` before ``fn = doodad.get_args('run_method', failure)`` and ``fn()``:
+Modify ``cd doodad/scripts/run_experiment_lite_doodad.py``, add ``if __name__ == '__main__'`` before ``fn = doodad.get_args('run_method', failure)`` and ``fn()``: (EDIT: more changes are commited already)
 
 Configure doodad for your ec2 account. First you have to specify the following environment variables in your ~/.bashrc: 
 AWS_ACCESS_KEY, AWS_ACCESS_KEY, DOODAD_S3_BUCKET
@@ -80,5 +84,13 @@ python experiment_utils/ec2ctl.py kill_f the_first_few_characters_of_your_experi
 OR
 ```
 python experiment_utils/ec2ctl.py kill specific_full_name_of_an_experiment
+```
+for headless rendering: 
+```
+python aws.py --mode local_docker --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python'
+```
+for gpu:
+```
+python aws.py --mode local_docker --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python' --use_gpu True
 ```
 
