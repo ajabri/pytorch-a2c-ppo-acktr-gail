@@ -202,6 +202,7 @@ class OpsPolicy(nn.Module):
 
     def act(self, inputs, rnn_hxs, masks, deterministic=False, info=None):
         value, actor_features, rnn_hxs, all_hxs = self.base(inputs, rnn_hxs, masks, info=info)
+        print(actor_features)
         dist = self.dist(actor_features) #[16, 64]
 
         if deterministic:
@@ -361,7 +362,6 @@ class OpsBase(NNBase):
         self.action_space = action_space
         self.discrete_action = (action_space.__class__.__name__ == "Discrete")
 
-
         if mode == 'cnn':
             self.cnn = self.make_cnn(in_dim=num_inputs, out_dim=hidden_size)
             num_inputs = hidden_size
@@ -376,9 +376,11 @@ class OpsBase(NNBase):
 
             self.cell = OpsCell(num_inputs, act_dim=hidden_size, hidden_size=hidden_size, persistent=persistent)
             self.actor = nn.Sequential(
+                # init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),
                 init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh())
 
             self.critic = nn.Sequential(
+                # init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),
                 init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh())
         else:
             if self.gate_input == 'hid':
@@ -422,12 +424,7 @@ class OpsBase(NNBase):
             init_(nn.Linear(32 * out_shape, out_dim)),
             nn.ReLU()
         )
-        #     import kornia
-        #     H, W = int(H*self.resolution_scale), int(W*self.resolution_scale)
-        #     out_shape = (((((H-4-1)//2+1-4-1)//2+1)-3-1)//2+1) * (((((W-4-1)//2+1-4-1)//2+1)-3-1)//2+1)
-        #     encoder = nn.Sequential(
-        #         # kornia.geometry.transform.Resize((C, H, W)),
-        #     )
+
 
         return encoder
 
@@ -452,6 +449,8 @@ class OpsBase(NNBase):
 
             hidden_critic = self.critic(x)
             hidden_actor = self.actor(x)
+            # hidden_critic = x
+            # hidden_actor = x
         else: #1
             if self.gate_input == 'hid':
                 if self.persistent:

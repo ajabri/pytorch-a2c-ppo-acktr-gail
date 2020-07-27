@@ -162,9 +162,13 @@ class FourRoomsNew(FourRooms):
         r, g, b = top_down_view[:, :, 0], top_down_view[:, :, 1], top_down_view[:, :, 2]
         indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
         # ratio = r[indices].reshape((-1, 1))
-        ratio = 255
-        top_down_view2[indices] = ratio * np.array([0, 0, 1])
-        top_down_view[indices] = ratio * np.array([1, 0, 0])
+        # ratio = 255
+        top_down_view2[indices] = np.array([0, 0, 255])
+        top_down_view[indices] = np.array([255, 0, 0])
+        # top_down_view2[indices] = np.array([49, 154, 87])
+        # # ratio * np.array([0, 0, 1])
+        # top_down_view[indices] = np.array([226, 34, 92])
+        # ratio * np.array([1, 0, 0])
         obs = self.render_obs()
         obs2 = obs.copy()
         r, g, b = obs2[:, :, 0], obs2[:, :, 1], obs2[:, :, 2]

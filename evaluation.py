@@ -180,12 +180,11 @@ def save_gif(actor_critic,
                 path = np.array(all_paths[r])
                 path[done+1:] = 0
                 total.append(path[:done+1])
-                # total.append(path[:done])
                 path = np.array(all_top_views[r])
                 path[done:] = 0
                 total_for_img.append(path)
-            # else:
-            #     total_for_img.append(all_top_views[i])
+            else:
+                total_for_img.append(all_top_views[i])
 
 
         all_paths = np.array(total_for_img)
@@ -241,23 +240,12 @@ def save_gif(actor_critic,
         img_list = img_list.reshape((num_processes//num, num, H, W, D))
         img_list = np.transpose(img_list, (0, 2, 1, 3, 4))
         img_list = np.clip(img_list.reshape((num*H, num*W, D)), 0, 255)
-        wandb.log({"visualization %s" % j: wandb.Image(img_list)})
 
-    # print([t.shape for t in total])
     total = np.clip(np.concatenate(total), 0, 255)
-    # total = np.transpose(total, (0, 2, 3, 1))
-    dir_name = save_dir
-    if os.path.isdir(dir_name) == False:
-        os.makedirs(dir_name)
-
-    # imageio.mimsave(dir_name + '/bouns-' + str(bonus1) + '-epoch-'+ str(epoch) + '-seed-'+ str(seed) + '.gif', total, duration=0.5)
-    # if np.sum(columns) != 16 * 39:
-    # cv2.imwrite(dir_name + '/img.png', img_list)
-    # print("img saved to", dir_name + '/img.png')
-    # print(".GIF files saved to", dir_name)
-    wandb.log({"video": wandb.Video(total, fps=4, format="gif")})
-
+    total = np.transpose(total, (0, 3, 1, 2))
 
     eval_envs.close()
-    # if env_name.startswith("Mini"):
-    #     return img_list
+    if env_name.startswith("Mini"):
+        return img_list, total, np.mean(eval_episode_rewards)
+    else:
+        return total, np.mean(eval_episode_rewards)

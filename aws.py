@@ -48,11 +48,11 @@ def main(**kwargs):
     torch.manual_seed(kwargs['seed'])
     if kwargs['cuda']:
         torch.cuda.manual_seed_all(kwargs['seed'])
-    device = torch.device("cuda:0" if kwargs['cuda'] else "cpu")
+    device = torch.device("cuda:1" if kwargs['cuda'] else "cpu")
 
-    if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
-        torch.backends.cudnn.benchmark = False
-        torch.backends.cudnn.deterministic = True
+    # if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
+    #     torch.backends.cudnn.benchmark = False
+    #     torch.backends.cudnn.deterministic = True
 
     # log_dir = os.path.expanduser(kwargs['log_dir'])
     exp_dir = os.getcwd() + '/data/' + EXP_NAME
@@ -85,7 +85,6 @@ def main(**kwargs):
             is_leaf=is_leaf,
             base_kwargs=dict(
                 recurrent=True,
-                partial_obs=kwargs['partial_obs'],
                 gate_input='obs' if is_leaf else kwargs['gate_input'],
                 hidden_size=kwargs['hidden_size'],
                 resolution_scale= 1 if kwargs['env_name'].startswith("MiniWorld") else kwargs['scale'],
@@ -193,7 +192,8 @@ def main(**kwargs):
                 [[0.0] if 'bad_transition' in info.keys() else [1.0]
                  for info in infos]).to(device)
 
-            scaled_reward = (action1 * kwargs['bonus1']).to(device) + reward.to(device)
+            # scaled_reward = (action1 * kwargs['bonus1']).to(device) + reward.to(device)
+            scaled_reward = (action1 * kwargs['bonus3']).to(device) * torch.abs(reward).to(device) + reward.to(device)
 
             rollouts[0].insert(obs, recurrent_hidden_states, action1,
                             action_log_prob1, value1, scaled_reward, masks, bad_masks,
@@ -298,13 +298,18 @@ def main(**kwargs):
 
                 wandb.log(dict(mean_gt=rollouts[0].actions.float().mean().item()))
 
-        if j % kwargs['gif_save_interval'] == 0:
+        if j % kwargs['gif_save_interval'] == 0 and not kwargs['debug']:
             img_list = save_gif(actor_critic, kwargs['env_name'], kwargs['seed'],
                          kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
                          persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
                          resolution_scale = kwargs['scale'], image_stack=kwargs['image_stack'])
-            # if not kwargs['debug'] and kwargs['env_name'].startswith("Mini"):
-            #     wandb.log({"visualization %s" % j: wandb.Image(img_list)})
+            if kwargs['env_name'].startswith("Mini"):
+                wandb.log({"visualization %s" % j: wandb.Image(img_list[0])})
+                wandb.log({"video %s" % j: wandb.Video(img_list[1], fps=4, format="gif")})
+                wandb.log(dict(eval_mean_reward=img_list[-1]))
+            else:
+                wandb.log({"video %s" % j: wandb.Video(img_list, fps=4, format="gif")})
+                wandb.log(dict(eval_mean_reward=img_list[-1]))
 
 
 if __name__ == "__main__":
@@ -318,8 +323,8 @@ if __name__ == "__main__":
 
         'use_gae': [True],
         'lr': [2.5e-4],
-        # 'clip_param': [0.1],
-        'clip_param': [0.2],
+        'clip_param': [0.1],
+        # 'clip_param': [0.2],
         'value_loss_coef': [0.5],
         'num_processes': [16],
         'num_steps': [512],
@@ -328,17 +333,16 @@ if __name__ == "__main__":
         'use_linear_lr_decay': [True],
         'entropy_coef': [0.01],
         'num_env_steps': [50000000],
-        'bonus1': [0.01],
-        # 'bonus3': [0.2],
+        # 'bonus1': [0],
+        'bonus3': [0.4],
         'cuda': [True],
-        'proj_name': ['debug-car2'],
+        'proj_name': ['debug-car'],
         'gif_save_interval': [30],
         'note': [''],
-        'debug': [False],
+        'debug': [True],
         'gate_input': ['hid'], #'obs' | 'hid'
-        'partial_obs': [False],
         'persistent': [True],
-        'scale': [1],
+        'scale': [.4],
         'hidden_size': [128],
         'always_zero': [False],
         'pred_loss': [False],
@@ -349,4 +353,5 @@ if __name__ == "__main__":
     run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)
 
     # python aws.py --mode local_docker --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python'
+    # xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python aws.py --mode local_docker --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python3' --use_gpu True
     # python aws.py --mode ec2 --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python'
