@@ -37,7 +37,7 @@ class RolloutStorage(object):
         self.step = 0
 
     def to(self, device):
-        self.obs = self.obs.to(device)
+        self.obs = self.obs #.to(device)
         self.recurrent_hidden_states = self.recurrent_hidden_states.to(device)
         self.rewards = self.rewards.to(device)
         self.value_preds = self.value_preds.to(device)

@@ -70,6 +70,7 @@ def main():
                 actor_critic,
                 args.value_loss_coef,
                 args.entropy_coef,
+                args.pred_loss_coef,
                 lr=args.lr,
                 eps=args.eps,
                 alpha=args.alpha,
@@ -82,6 +83,7 @@ def main():
                 args.num_mini_batch,
                 args.value_loss_coef,
                 args.entropy_coef,
+                args.pred_loss_coef,
                 lr=args.lr,
                 eps=args.eps,
                 max_grad_norm=args.max_grad_norm)
@@ -107,6 +109,7 @@ def main():
 
     episode_rewards = deque(maxlen=10)
 
+
     start = time.time()
     num_updates = int(
         args.num_env_steps) // args.num_steps // args.num_processes
@@ -131,12 +134,14 @@ def main():
                 for _agent in agent
             )
 
+        diags = dict()
         for step in range(args.num_steps):
             # Sample actions
             value1, action1, action_log_prob1, recurrent_hidden_states1 = act(0, step)
 
             if np.random.random() > 0.9:
                 print(action1.numpy().tolist())
+                
             # TODO make sure the last index of actions is the right hting to do
             last_action = 1 + rollouts[1].actions[step-1]
 
@@ -148,12 +153,20 @@ def main():
             recurrent_hidden_states = recurrent_hidden_states2
 
             # Obser reward and next obs
-            obs, reward, done, infos = envs.step(action)
+            obs, reward, done, infos = envs.step(torch.cat([action1, action2], dim=-1))
+
+            for k in infos[0]:
+                if k != 'episode':
+                    diags[k] = diags.get(k, [])
+                    diags[k].append(
+                        np.array([info[k] for info in infos])
+                    )
 
             for info in infos:
                 if 'episode' in info.keys():
                     episode_rewards.append(info['episode']['r'])
 
+            
             # If done then clean the history of observations.
             masks = torch.FloatTensor(
                 [[0.0] if done_ else [1.0] for done_ in done])
@@ -161,8 +174,12 @@ def main():
                 [[0.0] if 'bad_transition' in info.keys() else [1.0]
                  for info in infos])
 
+            bonus = action1.float() * 0
+            bonus[action1  > 0] = args.bonus1
+            bonus[action1 == 0] = args.bonus1*4
+            int_rew = bonus * -1
 
-            int_rew = action1 * args.bonus1
+            # import pdb; pdb.set_trace()
 
             # print(reward, int_rew)
             # reward
@@ -210,7 +227,6 @@ def main():
             #         img_trajs[-1].append((imgs, action1[0].item()))
 
     
-
         def update(i, info=None):
             with torch.no_grad():
                 next_value = actor_critic[i].get_value(
@@ -239,8 +255,6 @@ def main():
 
         # value_loss, action_loss, dist_entropy = list(zip((update(i) for i in range(len(agent)))))
 
-
-
         # save for every interval-th episode or for the last epoch
         if (j % args.save_interval == 0
                 or j == num_updates - 1) and args.save_dir != "":
@@ -258,6 +272,7 @@ def main():
         if j % args.log_interval == 0 and len(episode_rewards) > 1:
             total_num_steps = (j + 1) * args.num_processes * args.num_steps
             end = time.time()
+
             print(
                 "Updates {}, num timesteps {}, FPS {} \n Last {} training episodes: mean/median reward {:.1f}/{:.1f}, min/max reward {:.1f}/{:.1f}"
                 .format(j, total_num_steps,
@@ -305,10 +320,11 @@ def main():
                 # plt.colorbar(ticks=range(2))
                 # plt.clim(-0.5, 9.5)
                 #########################
+                # import pdb; pdb.set_trace()
 
                 if not args.debug:
                     # wandb_lunarlander(capt, pred)
-                    logging.wandb_minigrid(capt, pred)
+                    logging.wandb_minigrid(capt, pred, gate, diags)
 
 
             if not args.debug:

@@ -12,6 +12,7 @@ class PPO():
                  num_mini_batch,
                  value_loss_coef,
                  entropy_coef,
+                 pred_loss_coef=0,
                  lr=None,
                  eps=None,
                  max_grad_norm=None,
@@ -25,6 +26,7 @@ class PPO():
 
         self.value_loss_coef = value_loss_coef
         self.entropy_coef = entropy_coef
+        self.pred_loss_coef = pred_loss_coef
 
         self.max_grad_norm = max_grad_norm
         self.use_clipped_value_loss = use_clipped_value_loss
@@ -89,7 +91,7 @@ class PPO():
 
                     pred_err = torch.nn.functional.mse_loss(all_hxs, capts)
                     # import pdb; pdb.set_trace()
-                    total_loss += pred_err
+                    total_loss += self.pred_loss_coef * pred_err
     
                     pred_err_epoch += pred_err.item()
 

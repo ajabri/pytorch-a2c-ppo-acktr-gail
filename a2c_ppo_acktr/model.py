@@ -297,6 +297,24 @@ class OpsPolicy(nn.Module):
         return value, action_log_probs, dist_entropy, rnn_hxs, all_hxs
 
 
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, d_model, dropout=0.1, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0).transpose(0, 1)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        x = x + self.pe[:x.size(0), :]
+        return self.dropout(x)
+        
 
 init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
                         constant_(x, 0), np.sqrt(2))
@@ -306,11 +324,37 @@ class Dynamics(nn.Module):
 
         self.model = nn.Sequential(
             init_(nn.Linear(obs_dim + act_dim, hidden_size)), nn.Tanh(),
-            # init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh()
+            init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh()
         )
     
     def forward(self, x, a):
         return self.model(torch.cat([x, a], dim=-1))
+
+    
+
+class OpenLoop(nn.Module):
+    def __init__(self, obs_dim, act_dim, hidden_size=64):
+        super(OpenLoop, self).__init__()
+
+        self.model = nn.Sequential(
+            init_(nn.Linear(act_dim, hidden_size)), nn.Tanh(),
+            init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh()
+        )
+        self.pos_encoder = PositionalEncoding(obs_dim, max_len=100)
+        self.blind_count = None
+
+    def forward(self, x, g, a):
+        reset_count = g<=1
+        if self.blind_count is None:
+            self.blind_count = reset_count * 0
+        self.blind_count *= reset_count
+
+        x = self.pos_encoder(x)
+        z = self.model(torch.cat([x, a], dim=-1))
+
+        self.blind_count += 1
+
+        return z
 
 
 class OpsCell(nn.Module):
@@ -325,7 +369,8 @@ class OpsCell(nn.Module):
         
         # forward model
         self.predict = Dynamics(obs_dim=hidden_size, act_dim=act_dim, hidden_size=hidden_size)
-        
+        self.openloop = OpenLoop(obs_dim=hidden_size, act_dim=act_dim, hidden_size=hidden_size)
+
         for name, param in self.predict.named_parameters():
             if 'bias' in name:
                 nn.init.constant_(param, 0)
@@ -340,9 +385,12 @@ class OpsCell(nn.Module):
         outs = []
         capt = []
 
+        reset_count = g <= 1
+
         for t in range(g.shape[0]):
             z1 = self.capture(x[t])
             z2 = self.predict(h[0], a[t])
+            z3 = self.openloop(g[t], a[t])
 
             h = (1-g[t]) * z1 + g[t] * z2
             h = h.unsqueeze(0)

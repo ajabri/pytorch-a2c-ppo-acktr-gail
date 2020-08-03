@@ -173,6 +173,12 @@ def get_args():
         default='obs',
         help='obs | hid')
 
+    parser.add_argument(
+        '--pred-loss-coef',
+        type=float,
+        default=0.0,
+        help='dynamics prediction loss')
+
     args = parser.parse_args()
 
     args.cuda = not args.no_cuda and torch.cuda.is_available()

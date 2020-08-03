@@ -38,8 +38,13 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets):
         elif 'Mini' in env_id:
             import gym_minigrid
             env = gym_minigrid.envs.dynamicobstacles.DynamicObstaclesEnv(size=5, n_obstacles=1)
+            # env = gym_minigrid.envs.multiroom.MultiRoomEnv(
+            #     minNumRooms=2, maxNumRooms=2, maxRoomSize=4
+            # )
             # import pdb; pdb.set_trace()
             # env = gym.make(env_id)
+            # env = gym_minigrid.wrappers.NoOpAsync(env, costs=[2, 1])
+            env = gym_minigrid.wrappers.NoOpAsync(env, costs=[2, 1], which_obs='first')
 
         is_atari = hasattr(gym.envs, 'atari') and isinstance(
             env.unwrapped, gym.envs.atari.atari_env.AtariEnv)

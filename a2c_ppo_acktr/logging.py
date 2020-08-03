@@ -55,15 +55,27 @@ def wandb_lunarlander(capt, pred):
         "pred ang_v": wandb.Histogram(pred[:, 5]),
     })
 
-def wandb_minigrid(capt, pred):
-    if capt.ndim > 3:
-        wandb.log({
-            # "xhist %s" % j: [wandb.Image(cm.jet(_x*255)) for _x in (x1, x2)],
-            # "vhist %s" % j: [wandb.Image(cm.jet(_v*255)) for _v in (v1, v2)],
-            "capt": wandb.Images(capt[:, 0]),
-            "pred": wandb.Images(capt[:, 0]),
-            "capt mean": wand.Image(capt.mean(0)),
-            "pred mean": wand.Image(pred.mean(0)),
-        })
-    else:
-        pass
+import numpy as np
+def wandb_minigrid(capt, pred, gate, diags):
+    # import pdb; pdb.set_trace()
+    logz = dict()
+    for k in diags:
+        data = torch.from_numpy(np.array(diags[k]))
+        # import pdb; pdb.set_trace()
+        logz["capt_%s" % k] = wandb.Histogram(data[1-gate])
+        logz["pred_%s" % k] = wandb.Histogram(data[gate])
+        logz[k] = data.mean()
+
+    wandb.log(logz)
+
+    # if capt.ndim > 3:
+    #     wandb.log({
+    #         # "xhist %s" % j: [wandb.Image(cm.jet(_x*255)) for _x in (x1, x2)],
+    #         # "vhist %s" % j: [wandb.Image(cm.jet(_v*255)) for _v in (v1, v2)],
+    #         "capt": wandb.Images(capt[:, 0]),
+    #         "pred": wandb.Images(capt[:, 0]),
+    #         "capt mean": wand.Image(capt.mean(0)),
+    #         "pred mean": wand.Image(pred.mean(0)),
+    #     })
+    # else:
+    #     pass
