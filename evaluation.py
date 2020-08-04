@@ -38,6 +38,7 @@ def save_gif(actor_critic,
     eval_episode_rewards = []
     obs = eval_envs.reset()
     _, C, H, W = obs.shape
+    step_indices = torch.from_numpy(np.array([0 for _ in range(num_processes)])).to(device)
 
     if persistent:
         recurrent_hidden_size = actor_critic[0].recurrent_hidden_state_size * 2
@@ -76,12 +77,13 @@ def save_gif(actor_critic,
             action1 = action1.float()
 
         value2, action2, action_log_prob2, recurrent_hidden_states2 = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
-            info=torch.cat([action1, last_action], dim=1))
+            info=[torch.cat([action1, last_action], dim=1), step_indices])
 
         action = action2
         eval_recurrent_hidden_states = recurrent_hidden_states2
 
         obs, reward, done, infos = eval_envs.step(action)
+        step_indices = torch.from_numpy(np.array([info['step_index'] for info in infos])).to(device)
 
         imgs = np.array(eval_envs.full_obs())
         if action1.shape[-1] > 1:
@@ -170,10 +172,8 @@ def save_gif(actor_critic,
         total_for_img = []
         """only save the episodes that terminate. """
         # it's possible that there are two or none-dones
-        row_record = []
 
         for i in range(num_processes):
-            row_record.append(i)
             if i in rows: #if at least one of the episodes in this process terminates
                 idx = np.where(rows == i)[0][0]
                 r, done = i, columns[idx]
@@ -209,10 +209,8 @@ def save_gif(actor_critic,
         total = []
         epi_length = all_dones.shape[1]
         total_for_img = []
-        row_record = []
 
         for i in range(num_processes):
-            row_record.append(i)
             if i in rows: #if at least one of the episodes in this process terminates
                 idx = np.where(rows == i)[0][0]
                 r, done = i, columns[idx]

@@ -48,7 +48,7 @@ def main(**kwargs):
     torch.manual_seed(kwargs['seed'])
     if kwargs['cuda']:
         torch.cuda.manual_seed_all(kwargs['seed'])
-    device = torch.device("cuda:1" if kwargs['cuda'] else "cpu")
+    device = torch.device("cuda:3" if kwargs['cuda'] else "cpu")
 
     # if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
     #     torch.backends.cudnn.benchmark = False
@@ -88,9 +88,14 @@ def main(**kwargs):
                 gate_input='obs' if is_leaf else kwargs['gate_input'],
                 hidden_size=kwargs['hidden_size'],
                 resolution_scale= 1 if kwargs['env_name'].startswith("MiniWorld") else kwargs['scale'],
+                pred_mode=kwargs['pred_mode'],
                 persistent=kwargs['persistent']),
                 )
 
+        if is_leaf:
+            lr = kwargs['lr'][1]
+        else:
+            lr = kwargs['lr'][0]
         if kwargs['algo'] == 'ppo':
             agent = algo.PPO(
                 actor_critic,
@@ -99,7 +104,7 @@ def main(**kwargs):
                 kwargs['num_mini_batch'],
                 kwargs['value_loss_coef'],
                 kwargs['entropy_coef'],
-                lr=kwargs['lr'],
+                lr=lr,
                 eps=kwargs['eps'],
                 max_grad_norm=kwargs['max_grad_norm'])
 
@@ -132,6 +137,8 @@ def main(**kwargs):
     for r in rollouts:
         r.obs[0].copy_(obs)
         r.to(device)
+
+    step_indices = torch.from_numpy(np.array([0 for _ in range(kwargs['num_processes'])])).to(device)
 
     episode_rewards = deque(maxlen=10)
 
@@ -173,7 +180,7 @@ def main(**kwargs):
                 action1 = action1.float()
 
             value2, action2, action_log_prob2, recurrent_hidden_states2 = act(1, step,
-                info=torch.cat([action1, last_action], dim=1))
+                info=[torch.cat([action1, last_action], dim=1), step_indices])
 
             action = action2
             recurrent_hidden_states = recurrent_hidden_states2
@@ -192,8 +199,8 @@ def main(**kwargs):
                 [[0.0] if 'bad_transition' in info.keys() else [1.0]
                  for info in infos]).to(device)
 
-            # scaled_reward = (action1 * kwargs['bonus1']).to(device) + reward.to(device)
-            scaled_reward = (action1 * kwargs['bonus3']).to(device) * torch.abs(reward).to(device) + reward.to(device)
+            scaled_reward = (action1 * kwargs['bonus1']).to(device) + reward.to(device)
+            # scaled_reward = (action1 * kwargs['bonus3']).to(device) * torch.abs(reward).to(device) + reward.to(device)
 
             rollouts[0].insert(obs, recurrent_hidden_states, action1,
                             action_log_prob1, value1, scaled_reward, masks, bad_masks,
@@ -201,7 +208,8 @@ def main(**kwargs):
 
             rollouts[1].insert(obs, recurrent_hidden_states, action2,
                             action_log_prob2, value2, reward, masks, bad_masks,
-                            infos=torch.cat([action1, last_action], dim=1))
+                            infos=[torch.cat([action1, last_action], dim=1), step_indices])
+            step_indices = torch.from_numpy(np.array([info['step_index'] for info in infos])).to(device)
 
         def update(i, info=None):
             with torch.no_grad():
@@ -222,10 +230,10 @@ def main(**kwargs):
 
             return value_loss, action_loss, dist_entropy, pred_err
 
-        if j % 2 == 0 or True:
+        if j % 2 == 0:
             print("updating agent 0")
             value_loss1, action_loss1, dist_entropy1, pred_err1 = update(0)
-        if (j % 2) == 1 or True:
+        if (j % 2) == 1:
             print("updating agent 1")
             _, action1, _, _ = actor_critic[0].act(
                     rollouts[0].obs[-1].to(device), rollouts[0].recurrent_hidden_states[-1],
@@ -233,10 +241,10 @@ def main(**kwargs):
 
             if discrete_action:
                 value_loss2, action_loss2, dist_entropy2, pred_err2 = update(1,
-                    info=torch.cat([action1, rollouts[1].actions[-1]+1 ], dim=-1))
+                    info=[torch.cat([action1, rollouts[1].actions[-1]+1 ], dim=-1), step_indices])
             else:
                 value_loss2, action_loss2, dist_entropy2, pred_err2 = update(1,
-                    info=torch.cat([action1.float(), rollouts[1].actions[-1]+1 ], dim=-1))
+                    info=[torch.cat([action1.float(), rollouts[1].actions[-1]+1 ], dim=-1), step_indices])
 
 
         # save for every interval-th episode or for the last epoch
@@ -308,21 +316,21 @@ def main(**kwargs):
                 wandb.log({"video %s" % j: wandb.Video(img_list[1], fps=4, format="gif")})
                 wandb.log(dict(eval_mean_reward=img_list[-1]))
             else:
-                wandb.log({"video %s" % j: wandb.Video(img_list, fps=4, format="gif")})
+                wandb.log({"video %s" % j: wandb.Video(img_list[0], fps=4, format="gif")})
                 wandb.log(dict(eval_mean_reward=img_list[-1]))
 
 
 if __name__ == "__main__":
     sweep_params = {
         'algo': ['ppo'],
-        'seed': [111],
+        'seed': [222, 111],
         # 'env_name': ['MiniWorld-YMaze-v0'],
         'env_name': ['CarRacing-v0'],
         # 'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
         # 'env_name': ['MiniWorld-FourRooms-v0'],
 
         'use_gae': [True],
-        'lr': [2.5e-4],
+        'lr': [[0.5e-4, 2.5e-4]],
         'clip_param': [0.1],
         # 'clip_param': [0.2],
         'value_loss_coef': [0.5],
@@ -331,23 +339,24 @@ if __name__ == "__main__":
         'num_mini_batch': [4],
         'log_interval': [1],
         'use_linear_lr_decay': [True],
-        'entropy_coef': [0.01],
+        'entropy_coef': [0.005],
         'num_env_steps': [50000000],
-        # 'bonus1': [0],
-        'bonus3': [0.4],
-        'cuda': [True],
+        'bonus1': [0],
+        # 'bonus3': [0.4],
+        'cuda': [False],
         'proj_name': ['debug-car'],
-        'gif_save_interval': [30],
-        'note': [''],
-        'debug': [True],
-        'gate_input': ['hid'], #'obs' | 'hid'
+        'gif_save_interval': [500],
+        'note': ['alternate, detach x'],
+        'debug': [False],
+        'gate_input': ['hid', 'obs'], #'obs' | 'hid'
         'persistent': [True],
-        'scale': [.4],
+        'scale': [0.7],
         'hidden_size': [128],
         'always_zero': [False],
         'pred_loss': [False],
         'image_stack': [False],
         'save_dir': [''],
+        'pred_mode': ['pred_model'], #'pred_model' | 'pos_enc'
         }
 
     run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)

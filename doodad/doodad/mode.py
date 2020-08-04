@@ -74,7 +74,7 @@ class DockerMode(LaunchMode):
         self.gpu = gpu
 
     def get_docker_cmd(self, main_cmd, extra_args='', use_tty=True, verbose=True, pythonpath=None, pre_cmd=None, post_cmd=None,
-            checkpoint=False, no_root=False, use_gpu=False):
+            checkpoint=False, no_root=False, docker_command=''):
         from pdb import set_trace as st
         cmd_list= CommandBuilder()
         if pre_cmd:
@@ -108,10 +108,9 @@ class DockerMode(LaunchMode):
             use_tty = False
             extra_args += ' -d '  # detach is optional
         if use_tty:
-            if use_gpu:
-                docker_prefix = 'docker run %s -ti --gpus all %s  /bin/bash -c ' % (extra_args, self.docker_image)
-            else:
-                docker_prefix = 'docker run %s -ti %s /bin/bash -c ' % (extra_args, self.docker_image)
+            # docker_prefix = 'docker run %s -ti %s /bin/bash -c ' % (extra_args, self.docker_image)
+            docker_prefix = 'docker run ' + extra_args + ' ' + docker_command + ' -ti ' + self.docker_image + ' /bin/bash -c '
+            # from pdb import set_trace as st
         else:
             docker_prefix = 'docker run %s %s /bin/bash -c ' % (extra_args, self.docker_image)
         if self.gpu:
@@ -126,7 +125,7 @@ class LocalDocker(DockerMode):
         super(LocalDocker, self).__init__(**kwargs)
         self.checkpoints = checkpoints
 
-    def launch_command(self, cmd, mount_points=None, dry=False, verbose=False, use_gpu=False):
+    def launch_command(self, cmd, mount_points=None, dry=False, verbose=False, docker_command=''):
         mnt_args = ''
         py_path = []
         for mount in mount_points:
@@ -141,7 +140,7 @@ class LocalDocker(DockerMode):
                 raise NotImplementedError(type(mount))
         from pdb import set_trace as st
         full_cmd = self.get_docker_cmd(cmd, extra_args=mnt_args, pythonpath=py_path,
-                checkpoint=self.checkpoints, use_gpu=use_gpu)
+                checkpoint=self.checkpoints, docker_command=docker_command)
 
         if verbose:
             print(full_cmd)
@@ -288,7 +287,7 @@ class EC2SpotDocker(DockerMode):
     def make_timekey(self):
         return '%d'%(int(time.time()*1000))
 
-    def launch_command(self, main_cmd, mount_points=None, dry=False, verbose=False, use_gpu=False):
+    def launch_command(self, main_cmd, mount_points=None, dry=False, verbose=False, docker_command=''):
         default_config = dict(
             image_id=self.image_id,
             instance_type=self.instance_type,

@@ -202,7 +202,6 @@ class OpsPolicy(nn.Module):
 
     def act(self, inputs, rnn_hxs, masks, deterministic=False, info=None):
         value, actor_features, rnn_hxs, all_hxs = self.base(inputs, rnn_hxs, masks, info=info)
-        print(actor_features)
         dist = self.dist(actor_features) #[16, 64]
 
         if deterministic:
@@ -265,30 +264,56 @@ class Dynamics(nn.Module):
     def forward(self, x, a):
         return self.model(torch.cat([x, a], dim=-1))
 
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, dropout=0.1, max_len=5000):
+        import math
+        super(PositionalEncoding, self).__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.pe = pe
+        # pe = pe.unsqueeze(0).transpose(0, 1)
+        # self.register_buffer('pe', pe)
+
+    def forward(self, x, step_indices):
+        if step_indices.is_cuda:
+            indices = step_indices.data.cpu().numpy().astype(int)
+            x = x + (self.pe[indices]).to(x.get_device())
+        else:
+            indices = step_indices.data.numpy().astype(int)
+            x = x + self.pe[indices]
+        return self.dropout(x)
+        # return x
+
 
 class OpsCell(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_size=64, persistent=False):
+    def __init__(self, obs_dim, act_dim, hidden_size=64, persistent=False, pred_mode='pred_model'):
         super(OpsCell, self).__init__()
         self.hidden_size = hidden_size
         self.persistent = persistent
+        self.pred_mode = pred_mode
 
-        # observation model
         if self.persistent:
-            self.capture = nn.Sequential(
-                init_(nn.Linear(obs_dim + hidden_size, hidden_size)), nn.Tanh(),
-                init_(nn.Linear(hidden_size, 2 * hidden_size)), nn.Tanh()
-            )
-            # forward model
-            self.predict = Dynamics(obs_dim=2 * hidden_size, act_dim=act_dim, hidden_size=2 * hidden_size)
+            cap_in_dim = obs_dim + hidden_size
+            cap_out_dim = 2 * hidden_size
         else:
-            self.capture = nn.Sequential(
-                init_(nn.Linear(obs_dim, hidden_size)), nn.Tanh(),
-                init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh()
-            )
+            cap_in_dim = obs_dim
+            cap_out_dim = hidden_size
+
+        self.capture = nn.Sequential(
+            init_(nn.Linear(cap_in_dim, hidden_size)), nn.Tanh(),
+            init_(nn.Linear(hidden_size, cap_out_dim)), nn.Tanh()
+        )
+
+        if self.pred_mode == 'pred_model':
             # forward model
-            self.predict = Dynamics(obs_dim=hidden_size, act_dim=act_dim, hidden_size=hidden_size)
-
-
+            self.predict = Dynamics(obs_dim=cap_out_dim, act_dim=act_dim, hidden_size=cap_out_dim)
+        elif self.pred_mode == 'pos_enc':
+            self.predict = PositionalEncoding(d_model=cap_out_dim)
 
         for name, param in self.predict.named_parameters():
             if 'bias' in name:
@@ -296,7 +321,7 @@ class OpsCell(nn.Module):
             elif 'weight' in name:
                 nn.init.orthogonal_(param)
 
-    def forward(self, x, h, g, a, full_hidden = False):
+    def forward(self, x, h, g, a, step_indices, full_hidden = False):
         # B x T x I
         # B x T x H
         # also keep another hidden state, so make h' = [h, h_persistent]
@@ -314,7 +339,10 @@ class OpsCell(nn.Module):
             # print(x.shape, h2.shape, h.shape)
             if self.persistent:
                 z1 = self.capture(torch.cat((x[t], h2[0]), dim = -1)) #2 * hidden_size
-                z2 = self.predict(torch.cat((h1[0], h2[0]), dim = -1), a[t]) #2 * hidden_size
+                if self.pred_mode == 'pred_model':
+                    z2 = self.predict(torch.cat((h1[0], h2[0]), dim = -1), a[t]) #2 * hidden_size
+                elif self.pred_mode == 'pos_enc':
+                    z2 = self.predict(torch.cat((h1[0], h2[0]), dim = -1), step_indices[t])
 
                 z1_1, z1_2 = torch.chunk(z1, 2, dim = -1)
                 z2_1, z2_2 = torch.chunk(z2, 2, dim = -1)
@@ -351,7 +379,7 @@ class OpsBase(NNBase):
     def __init__(self, num_inputs, action_space, is_leaf,
                 recurrent=False, hidden_size=64, partial_obs=False,
                 gate_input='obs', persistent=False, mode='linear',
-                resolution_scale=1.0):
+                resolution_scale=1.0, pred_mode='pred_model'):
         super(OpsBase, self).__init__(recurrent, num_inputs, hidden_size)
 
         self.is_leaf = is_leaf
@@ -374,13 +402,11 @@ class OpsBase(NNBase):
                 self.act_emb = nn.Sequential(
                     init_(nn.Linear(action_space.shape[0], hidden_size)), nn.ReLU())
 
-            self.cell = OpsCell(num_inputs, act_dim=hidden_size, hidden_size=hidden_size, persistent=persistent)
+            self.cell = OpsCell(num_inputs, act_dim=hidden_size, hidden_size=hidden_size, persistent=persistent, pred_mode=pred_mode)
             self.actor = nn.Sequential(
-                # init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),
                 init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh())
 
             self.critic = nn.Sequential(
-                # init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),
                 init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh())
         else:
             if self.gate_input == 'hid':
@@ -434,18 +460,21 @@ class OpsBase(NNBase):
         if x.ndim > 3 and self.gate_input != 'hid':
             x = x/255
             x = self.cnn(x)
+        if not self.is_leaf:
+            x = x.detach()
 
-        if info is not None and info.numel() > 0: #2
+        if info is not None and info[0].numel() > 0: #2
             # g, a = torch.split(info, 1, dim=-1)
-            assert len(info.shape) == 2
-            g, a = info[:, 0].unsqueeze(dim=-1), info[:, 1:]
+            assert len(info[0].shape) == 2
+            g, a = info[0][:, 0].unsqueeze(dim=-1), info[0][:, 1:]
+            step_indices = info[1]
             if self.discrete_action:
                 # consider embedding all observations and actions before passing to gru...
                 a = self.act_emb(a.squeeze(-1).long())
             else:
                 a = self.act_emb(a)
 
-            x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks, g, a)
+            x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks, g, a, step_indices)
 
             hidden_critic = self.critic(x)
             hidden_actor = self.actor(x)
@@ -468,13 +497,14 @@ class OpsBase(NNBase):
 
 
 
-    def _forward_gru(self, x, hxs, masks, gate, action):
+    def _forward_gru(self, x, hxs, masks, gate, action, step_indices):
         if x.size(0) == hxs.size(0):
             x, hxs, capt = self.cell(
                 x.unsqueeze(0),
                 (hxs * masks).unsqueeze(0),
                 (gate * masks).unsqueeze(0),
-                (action * masks).unsqueeze(0))
+                (action * masks).unsqueeze(0),
+                step_indices)
 
             x = x.squeeze(0)
             hxs = hxs.squeeze(0)
@@ -491,6 +521,7 @@ class OpsBase(NNBase):
 
             # Same deal with masks
             masks = masks.view(T, N)
+            step_indices = step_indices.view(T, N)
 
             # Let's figure out which steps in the sequence have a zero for any agent
             # We will always assume t=0 has a zero in it as that makes the logic cleaner
@@ -526,7 +557,7 @@ class OpsBase(NNBase):
                     hxs * masks[start_idx].view(1, -1, 1), # [1, 4, 256]
                     gate[start_idx:end_idx] * masks[start_idx:end_idx, ..., None],
                     action[start_idx:end_idx] * masks[start_idx:end_idx, ..., None],
-                    )
+                    step_indices[start_idx:end_idx])
 
                 outputs.append(rnn_scores)
                 capts.append(capt)

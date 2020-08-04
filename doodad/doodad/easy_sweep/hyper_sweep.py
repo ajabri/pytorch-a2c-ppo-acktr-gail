@@ -64,7 +64,7 @@ def run_sweep_parallel(run_method, params, repeat=1, num_cpu=multiprocessing.cpu
 
 
 SCRIPTS_DIR = os.path.join(REPO_DIR, 'scripts')
-def run_sweep_doodad(run_method, params, run_mode, mounts, repeat=1, test_one=False, python_cmd='python', use_gpu=False):
+def run_sweep_doodad(run_method, params, run_mode, mounts, repeat=1, test_one=False, python_cmd='python', docker_command=''):
     sweeper = Sweeper(params, repeat)
     for config in sweeper:
         def run_method_args():
@@ -74,7 +74,7 @@ def run_sweep_doodad(run_method, params, run_mode, mounts, repeat=1, test_one=Fa
                 mode=run_mode,
                 python_cmd=python_cmd,
                 mount_points=mounts,
-                use_gpu=use_gpu,
+                docker_command=docker_command,
                 use_cloudpickle=True,
                 args = {'run_method': run_method_args},
         )
