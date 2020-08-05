@@ -18,13 +18,12 @@ from a2c_ppo_acktr.envs import make_vec_envs
 from a2c_ppo_acktr.model import OpsPolicy
 from a2c_ppo_acktr.storage import RolloutStorage
 import time
-
+from pdb import set_trace as st
 import wandb
 from a2c_ppo_acktr import logging
 
 import json
 from evaluation import *
-from pdb import set_trace as st
 from experiment_utils.run_sweep import run_sweep
 
 class ClassEncoder(json.JSONEncoder):
@@ -48,7 +47,7 @@ def main(**kwargs):
     torch.manual_seed(kwargs['seed'])
     if kwargs['cuda']:
         torch.cuda.manual_seed_all(kwargs['seed'])
-    device = torch.device("cuda:3" if kwargs['cuda'] else "cpu")
+    device = torch.device("cuda:2" if kwargs['cuda'] else "cpu")
 
     # if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
     #     torch.backends.cudnn.benchmark = False
@@ -94,8 +93,11 @@ def main(**kwargs):
 
         if is_leaf:
             lr = kwargs['lr'][1]
+            entropy_coef = kwargs['entropy_coef'][1]
         else:
             lr = kwargs['lr'][0]
+            entropy_coef = kwargs['entropy_coef'][0]
+
         if kwargs['algo'] == 'ppo':
             agent = algo.PPO(
                 actor_critic,
@@ -103,7 +105,7 @@ def main(**kwargs):
                 kwargs['ppo_epoch'],
                 kwargs['num_mini_batch'],
                 kwargs['value_loss_coef'],
-                kwargs['entropy_coef'],
+                entropy_coef,
                 lr=lr,
                 eps=kwargs['eps'],
                 max_grad_norm=kwargs['max_grad_norm'])
@@ -199,7 +201,10 @@ def main(**kwargs):
                 [[0.0] if 'bad_transition' in info.keys() else [1.0]
                  for info in infos]).to(device)
 
-            scaled_reward = (action1 * kwargs['bonus1']).to(device) + reward.to(device)
+            if j <= kwargs['no_bonus']:
+                scaled_reward = reward
+            else:
+                scaled_reward = (action1 * kwargs['bonus1']).to(device) + reward.to(device)
             # scaled_reward = (action1 * kwargs['bonus3']).to(device) * torch.abs(reward).to(device) + reward.to(device)
 
             rollouts[0].insert(obs, recurrent_hidden_states, action1,
@@ -314,53 +319,53 @@ def main(**kwargs):
             if kwargs['env_name'].startswith("Mini"):
                 wandb.log({"visualization %s" % j: wandb.Image(img_list[0])})
                 wandb.log({"video %s" % j: wandb.Video(img_list[1], fps=4, format="gif")})
-                wandb.log(dict(eval_mean_reward=img_list[-1]))
+                wandb.log(dict(eval_mean_reward=img_list[-2]))
+                wandb.log(dict(eval_mean_gt=img_list[-1]))
             else:
                 wandb.log({"video %s" % j: wandb.Video(img_list[0], fps=4, format="gif")})
-                wandb.log(dict(eval_mean_reward=img_list[-1]))
+                wandb.log(dict(eval_mean_reward=img_list[-2]))
+                wandb.log(dict(eval_mean_gt=img_list[-1]))
 
 
 if __name__ == "__main__":
     sweep_params = {
         'algo': ['ppo'],
-        'seed': [222, 111],
+        'seed': [222],
         # 'env_name': ['MiniWorld-YMaze-v0'],
         'env_name': ['CarRacing-v0'],
         # 'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
         # 'env_name': ['MiniWorld-FourRooms-v0'],
 
         'use_gae': [True],
-        'lr': [[0.5e-4, 2.5e-4]],
+        'lr': [[0.5e-4, 2.5e-4], [2.5e-4, 2.5e-4]],
         'clip_param': [0.1],
-        # 'clip_param': [0.2],
         'value_loss_coef': [0.5],
         'num_processes': [16],
         'num_steps': [512],
         'num_mini_batch': [4],
         'log_interval': [1],
         'use_linear_lr_decay': [True],
-        'entropy_coef': [0.005],
+        'entropy_coef': [[0.001, 0.005], [0.005, 0.005]],
         'num_env_steps': [50000000],
         'bonus1': [0],
         # 'bonus3': [0.4],
         'cuda': [False],
-        'proj_name': ['debug-car'],
-        'gif_save_interval': [500],
-        'note': ['alternate, detach x'],
+        'proj_name': ['car-entropy-test'],
+        'gif_save_interval': [1000],
+        'note': ['alternate'],
         'debug': [False],
         'gate_input': ['hid', 'obs'], #'obs' | 'hid'
-        'persistent': [True],
-        'scale': [0.7],
+        'persistent': [True, False],
+        'scale': [0.4],
         'hidden_size': [128],
         'always_zero': [False],
         'pred_loss': [False],
         'image_stack': [False],
         'save_dir': [''],
         'pred_mode': ['pred_model'], #'pred_model' | 'pos_enc'
+        'no_bonus': [0],
         }
-
+ 
     run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)
 
     # python aws.py --mode local_docker --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python'
-    # xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python aws.py --mode local_docker --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python3' --use_gpu True
-    # python aws.py --mode ec2 --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python'
