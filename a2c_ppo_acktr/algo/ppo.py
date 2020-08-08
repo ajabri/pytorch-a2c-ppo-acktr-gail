@@ -32,7 +32,7 @@ class PPO():
 
         self.optimizer = optim.Adam(actor_critic.parameters(), lr=lr, eps=eps)
 
-    def update(self, rollouts, pred_loss=False, full_hidden=False, num_processes=16, device='cpu'):
+    def update(self, rollouts, pred_loss=False, require_memory=False, num_processes=16, device='cpu'):
         advantages = rollouts.returns[:-1] - rollouts.value_preds[:-1]
         advantages = (advantages - advantages.mean()) / (
             advantages.std() + 1e-5)
@@ -44,7 +44,7 @@ class PPO():
         for e in range(self.ppo_epoch):
             if self.actor_critic.is_recurrent:
                 data_generator = rollouts.recurrent_generator(
-                    advantages, self.num_mini_batch, full_hidden=full_hidden)
+                    advantages, self.num_mini_batch, full_hidden=require_memory)
             else:
                 data_generator = rollouts.feed_forward_generator(
                     advantages, self.num_mini_batch)
@@ -57,10 +57,10 @@ class PPO():
                 obs_batch = obs_batch.to(device)
 
                 # Reshape to do in a single forward pass for all steps
-                if full_hidden and not self.actor_critic.base.is_leaf: #for pi_1
+                if require_memory and not self.actor_critic.base.is_leaf: #for pi_1
                     values, action_log_probs, dist_entropy, rnn_hxs, all_hxs = self.actor_critic.evaluate_actions(
                         obs_batch, full_recurrent_hidden_states_batch, masks_batch,
-                        actions_batch, info=infos_batch, process_rnn_hxs=full_hidden, N=num_processes//self.num_mini_batch,
+                        actions_batch, info=infos_batch, process_rnn_hxs=require_memory, N=num_processes//self.num_mini_batch,
                         device=device)
                 else:
                     values, action_log_probs, dist_entropy, rnn_hxs, all_hxs = self.actor_critic.evaluate_actions(

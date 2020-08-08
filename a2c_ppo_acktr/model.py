@@ -166,10 +166,6 @@ class OpsPolicy(nn.Module):
         super(OpsPolicy, self).__init__()
 
         if len(obs_shape) == 3:
-            if base_kwargs['resolution_scale'] == .5:
-                obs_shape = (obs_shape[0], obs_shape[1]//2, obs_shape[2]//2)
-            elif base_kwargs['resolution_scale'] == .25:
-                obs_shape = (obs_shape[0], obs_shape[1]//4, obs_shape[2]//4)
             self.base = OpsBase(obs_shape, action_space, is_leaf=is_leaf, mode='cnn', **base_kwargs)
         else:
             self.base = OpsBase(obs_shape[0], action_space, is_leaf=is_leaf, **base_kwargs)
@@ -221,6 +217,7 @@ class OpsPolicy(nn.Module):
     def evaluate_actions(self, inputs, rnn_hxs, masks, action, info=None, process_rnn_hxs=False, N=None, device='cpu'):
         if process_rnn_hxs:
             rnn_hxs = self.process_rnn_hxs(rnn_hxs, masks, N=N, device=device)
+
         value, actor_features, rnn_hxs, all_hxs = self.base(inputs, rnn_hxs, masks, info=info)
         dist = self.dist(actor_features)
         action_log_probs = dist.log_probs(action)
@@ -243,8 +240,9 @@ class OpsPolicy(nn.Module):
         for i in range(len(has_zeros) - 1):
             start_idx = has_zeros[i]
             end_idx = has_zeros[i + 1]
-            all_hxs.append(torch.zeros((1, dim)).to(device))
-            all_hxs.append(hxs[start_idx:end_idx-1])
+            # all_hxs.append(torch.zeros((1, dim)).to(device)) #the first step has no memory
+            # all_hxs.append(hxs[start_idx+1:end_idx])
+            all_hxs.append(hxs[start_idx:end_idx])
 
         all_hxs = torch.cat(all_hxs, dim=0)
         return all_hxs
@@ -258,7 +256,7 @@ class Dynamics(nn.Module):
 
         self.model = nn.Sequential(
             init_(nn.Linear(obs_dim + act_dim, hidden_size)), nn.Tanh(),
-            # init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh()
+            init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh()
         )
 
     def forward(self, x, a):
@@ -329,20 +327,19 @@ class OpsCell(nn.Module):
         capt = []
 
         # h1: short memory
-        # h2: longer memory
+        # h2: persistent memory
         if self.persistent:
             h1, h2 = torch.chunk(h, 2, dim = -1)
         if full_hidden:
             hs = [h]
 
         for t in range(g.shape[0]):
-            # print(x.shape, h2.shape, h.shape)
             if self.persistent:
                 z1 = self.capture(torch.cat((x[t], h2[0]), dim = -1)) #2 * hidden_size
                 if self.pred_mode == 'pred_model':
                     z2 = self.predict(torch.cat((h1[0], h2[0]), dim = -1), a[t]) #2 * hidden_size
-                elif self.pred_mode == 'pos_enc':
-                    z2 = self.predict(torch.cat((h1[0], h2[0]), dim = -1), step_indices[t])
+                # elif self.pred_mode == 'pos_enc':
+                #     z2 = self.predict(torch.cat((h1[0], h2[0]), dim = -1), step_indices[t])
 
                 z1_1, z1_2 = torch.chunk(z1, 2, dim = -1)
                 z2_1, z2_2 = torch.chunk(z2, 2, dim = -1)
@@ -379,14 +376,16 @@ class OpsBase(NNBase):
     def __init__(self, num_inputs, action_space, is_leaf,
                 recurrent=False, hidden_size=64, partial_obs=False,
                 gate_input='obs', persistent=False, mode='linear',
-                resolution_scale=1.0, pred_mode='pred_model'):
+                resolution_scale=1.0, pred_mode='pred_model', fixed_probability=None):
         super(OpsBase, self).__init__(recurrent, num_inputs, hidden_size)
 
         self.is_leaf = is_leaf
         self.gate_input = gate_input
         self.hidden_size = hidden_size
         self.persistent = persistent
-        self.resolution_scale = resolution_scale
+        self.fixed_probability = fixed_probability
+        if self.fixed_probability != None:
+            self.bernoulli = torch.distributions.Bernoulli(torch.tensor([self.fixed_probability])) #chance of getting 1, i.e. predict
         self.action_space = action_space
         self.discrete_action = (action_space.__class__.__name__ == "Discrete")
 
@@ -410,7 +409,10 @@ class OpsBase(NNBase):
                 init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh())
         else:
             if self.gate_input == 'hid':
-                num_inputs = hidden_size
+                if self.persistent:
+                    num_inputs = 2 * hidden_size
+                else:
+                    num_inputs = hidden_size
 
             self.actor = nn.Sequential(
                 init_(nn.Linear(num_inputs, hidden_size)), nn.Tanh(),
@@ -457,17 +459,19 @@ class OpsBase(NNBase):
     def forward(self, inputs, rnn_hxs, masks, info=None):
         x = inputs
 
-        if x.ndim > 3 and self.gate_input != 'hid':
-            x = x/255
-            x = self.cnn(x)
-        if not self.is_leaf:
-            x = x.detach()
+        if self.gate_input == 'obs':
+            if x.ndim > 3:
+                x = x/255
+                x = self.cnn(x)
+                if not self.is_leaf:
+                    x = x.detach()
 
         if info is not None and info[0].numel() > 0: #2
-            # g, a = torch.split(info, 1, dim=-1)
             assert len(info[0].shape) == 2
             g, a = info[0][:, 0].unsqueeze(dim=-1), info[0][:, 1:]
             step_indices = info[1]
+            if self.fixed_probability != None:
+                g = torch.cat([self.bernoulli.sample() for _ in range(g.shape[0])]).unsqueeze(dim=-1).to(g.get_device())
             if self.discrete_action:
                 # consider embedding all observations and actions before passing to gru...
                 a = self.act_emb(a.squeeze(-1).long())
@@ -478,20 +482,15 @@ class OpsBase(NNBase):
 
             hidden_critic = self.critic(x)
             hidden_actor = self.actor(x)
-            # hidden_critic = x
-            # hidden_actor = x
         else: #1
+            assert self.gate_input in ['hid', 'obs'], 'invalid gate iput'
             if self.gate_input == 'hid':
-                if self.persistent:
-                    rnn_hxs, _ = torch.chunk(rnn_hxs, 2, dim = -1)
-
                 hidden_critic = self.critic(rnn_hxs)
                 hidden_actor = self.actor(rnn_hxs)
-            elif not self.gate_input == 'obs':
-                assert False, 'invalid gate iput'
             else:
                 hidden_critic = self.critic(x)
                 hidden_actor = self.actor(x)
+
 
         return self.critic_linear(hidden_critic), hidden_actor, rnn_hxs, x
 

@@ -47,7 +47,7 @@ def main(**kwargs):
     torch.manual_seed(kwargs['seed'])
     if kwargs['cuda']:
         torch.cuda.manual_seed_all(kwargs['seed'])
-    device = torch.device("cuda:2" if kwargs['cuda'] else "cpu")
+    device = torch.device("cuda:4" if kwargs['cuda'] else "cpu")
 
     # if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
     #     torch.backends.cudnn.benchmark = False
@@ -69,25 +69,25 @@ def main(**kwargs):
 
     torch.set_num_threads(1)
     envs = make_vec_envs(kwargs['env_name'], kwargs['seed'], kwargs['num_processes'],
-                         kwargs['gamma'], log_dir, device, False, resolution_scale=kwargs['scale'], image_stack=kwargs['image_stack'])
+                         kwargs['gamma'], log_dir, device, False,
+                         resolution_scale=kwargs['scale'], image_stack=kwargs['image_stack'])
 
-    flip, flip1 = False, False
+    # flip, flip1 = False, False
     discrete_action = envs.action_space.__class__.__name__ == "Discrete"
 
     def make_agent(is_leaf=True):
         ## AGENT CONSTRUCTION:
         ## Modularize this and allow for cascading (obs dim for child policy should be cat of obs and parents output)
-        scaled_obs_shape = envs.observation_space.shape
         actor_critic = OpsPolicy(
-            scaled_obs_shape,
+            envs.observation_space.shape,
             envs.action_space if is_leaf else gym.spaces.Discrete(2),
             is_leaf=is_leaf,
             base_kwargs=dict(
                 recurrent=True,
                 gate_input='obs' if is_leaf else kwargs['gate_input'],
                 hidden_size=kwargs['hidden_size'],
-                resolution_scale= 1 if kwargs['env_name'].startswith("MiniWorld") else kwargs['scale'],
                 pred_mode=kwargs['pred_mode'],
+                fixed_probability=kwargs['fixed_probability'],
                 persistent=kwargs['persistent']),
                 )
 
@@ -116,13 +116,14 @@ def main(**kwargs):
         else:
             action_dim = envs.action_space.shape[0] if is_leaf else 1
             info_size = 1+envs.action_space.shape[0]
+
         if kwargs['persistent']:
             recurrent_hidden_size = actor_critic.recurrent_hidden_state_size * 2
         else:
             recurrent_hidden_size = actor_critic.recurrent_hidden_state_size
 
         rollouts = RolloutStorage(kwargs['num_steps'], kwargs['num_processes'],
-                                    scaled_obs_shape, envs.action_space,
+                                    envs.observation_space.shape, envs.action_space,
                                     recurrent_hidden_size,
                                     info_size=info_size if is_leaf else 0, action_shape=action_dim)
 
@@ -151,6 +152,7 @@ def main(**kwargs):
     img_trajs = [[]]
 
     def act(i, step, **kwargs):
+        # collect rollouts
         with torch.no_grad():
             value, action, action_log_prob, recurrent_hidden_states = actor_critic[i].act(
                 rollouts[i].obs[step].to(device), rollouts[i].recurrent_hidden_states[step],
@@ -164,19 +166,19 @@ def main(**kwargs):
             # decrease learning rate linearly
             (utils.update_linear_schedule(
                 _agent.optimizer, j, num_updates,
-                _agent.optimizer.lr if kwargs['algo'] == "acktr" else kwargs['lr'])
+                _agent.optimizer.lr if kwargs['algo'] == "acktr" else kwargs['lr'][-1])
                 for _agent in agent
             )
 
         for step in range(kwargs['num_steps']):
             # Sample actions
-            value1, action1, action_log_prob1, recurrent_hidden_states1 = act(0, step)
+            value1, action1, action_log_prob1, _ = act(0, step)
 
             if kwargs['always_zero']:
                 action1 = torch.zeros(action1.shape).to(device).long()
 
             if discrete_action:
-                last_action = rollouts[1].actions[step-1] + 1
+                last_action = rollouts[1].actions[step-1] + 1 #to distinguish actual action from default ones
             else:
                 last_action = rollouts[1].actions[step-1]
                 action1 = action1.float()
@@ -201,7 +203,7 @@ def main(**kwargs):
                 [[0.0] if 'bad_transition' in info.keys() else [1.0]
                  for info in infos]).to(device)
 
-            if j <= kwargs['no_bonus']:
+            if j < kwargs['no_bonus']:
                 scaled_reward = reward
             else:
                 scaled_reward = (action1 * kwargs['bonus1']).to(device) + reward.to(device)
@@ -226,9 +228,9 @@ def main(**kwargs):
                                     kwargs['gae_lambda'], kwargs['use_proper_time_limits'])
 
             pred_loss = ((i!=0) and (kwargs['pred_loss']))
-            full_hidden = ((i==0) and (kwargs['gate_input'] == 'hid')) or (pred_loss and kwargs['persistent'])
+            require_memory = ((i==0) and (kwargs['gate_input'] == 'hid')) or (pred_loss and kwargs['persistent'])
             value_loss, action_loss, dist_entropy, pred_err = agent[i].update(rollouts[i],
-                pred_loss=pred_loss, full_hidden=full_hidden, num_processes=kwargs['num_processes'],
+                pred_loss=pred_loss, require_memory=require_memory, num_processes=kwargs['num_processes'],
                 device=device)
 
             rollouts[i].after_update()
@@ -240,6 +242,7 @@ def main(**kwargs):
             value_loss1, action_loss1, dist_entropy1, pred_err1 = update(0)
         if (j % 2) == 1:
             print("updating agent 1")
+            # use updated pi_1
             _, action1, _, _ = actor_critic[0].act(
                     rollouts[0].obs[-1].to(device), rollouts[0].recurrent_hidden_states[-1],
                     rollouts[0].masks[-1])
@@ -249,7 +252,7 @@ def main(**kwargs):
                     info=[torch.cat([action1, rollouts[1].actions[-1]+1 ], dim=-1), step_indices])
             else:
                 value_loss2, action_loss2, dist_entropy2, pred_err2 = update(1,
-                    info=[torch.cat([action1.float(), rollouts[1].actions[-1]+1 ], dim=-1), step_indices])
+                    info=[torch.cat([action1.float(), rollouts[1].actions[-1]], dim=-1), step_indices])
 
 
         # save for every interval-th episode or for the last epoch
@@ -330,14 +333,14 @@ def main(**kwargs):
 if __name__ == "__main__":
     sweep_params = {
         'algo': ['ppo'],
-        'seed': [222],
+        'seed': [111],
         # 'env_name': ['MiniWorld-YMaze-v0'],
         'env_name': ['CarRacing-v0'],
         # 'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
         # 'env_name': ['MiniWorld-FourRooms-v0'],
 
         'use_gae': [True],
-        'lr': [[0.5e-4, 2.5e-4], [2.5e-4, 2.5e-4]],
+        'lr': [[0.5e-4, 2.5e-4]],
         'clip_param': [0.1],
         'value_loss_coef': [0.5],
         'num_processes': [16],
@@ -345,18 +348,17 @@ if __name__ == "__main__":
         'num_mini_batch': [4],
         'log_interval': [1],
         'use_linear_lr_decay': [True],
-        'entropy_coef': [[0.001, 0.005], [0.005, 0.005]],
+        'entropy_coef': [[0.005, 0.005]],
         'num_env_steps': [50000000],
         'bonus1': [0],
-        # 'bonus3': [0.4],
-        'cuda': [False],
-        'proj_name': ['car-entropy-test'],
-        'gif_save_interval': [1000],
+        'cuda': [True],
+        'proj_name': ['debug-car'],
+        'gif_save_interval': [300],
         'note': ['alternate'],
         'debug': [False],
-        'gate_input': ['hid', 'obs'], #'obs' | 'hid'
-        'persistent': [True, False],
-        'scale': [0.4],
+        'gate_input': ['obs'], #'obs' | 'hid'
+        'persistent': [True],
+        'scale': [1],
         'hidden_size': [128],
         'always_zero': [False],
         'pred_loss': [False],
@@ -364,8 +366,10 @@ if __name__ == "__main__":
         'save_dir': [''],
         'pred_mode': ['pred_model'], #'pred_model' | 'pos_enc'
         'no_bonus': [0],
+        'fixed_probability': [0.8],
         }
- 
+
     run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)
 
-    # python aws.py --mode local_docker --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python'
+    # python aws.py --mode ec2 --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python'
+    # python aws.py --mode local_docker --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python3' --docker_command "--user vioichigo --workdir /home/vioichigo/code --gpus all"

@@ -244,6 +244,6 @@ def save_gif(actor_critic,
 
     eval_envs.close()
     if env_name.startswith("Mini"):
-        return img_list, total, np.mean(eval_episode_rewards)
+        return img_list, total, np.mean(eval_episode_rewards), action1.float().mean().item()
     else:
-        return total, np.mean(eval_episode_rewards)
+        return total, np.mean(eval_episode_rewards), action1.float().mean().item()
