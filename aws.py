@@ -1,3 +1,4 @@
+from pdb import set_trace as st
 import copy
 import glob
 import os
@@ -12,13 +13,12 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from a2c_ppo_acktr import algo, utils
-from a2c_ppo_acktr.algo import gail
+# from a2c_ppo_acktr.algo import gail
 from a2c_ppo_acktr.arguments import get_args
 from a2c_ppo_acktr.envs import make_vec_envs
 from a2c_ppo_acktr.model import OpsPolicy
 from a2c_ppo_acktr.storage import RolloutStorage
 import time
-from pdb import set_trace as st
 import wandb
 from a2c_ppo_acktr import logging
 
@@ -35,7 +35,7 @@ class ClassEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 INSTANCE_TYPE = 'c4.4xlarge'
-EXP_NAME = 'async/debug-car-racing'
+EXP_NAME = 'async/car3'
 
 def main(**kwargs):
     args = get_args()
@@ -47,8 +47,7 @@ def main(**kwargs):
     torch.manual_seed(kwargs['seed'])
     if kwargs['cuda']:
         torch.cuda.manual_seed_all(kwargs['seed'])
-    device = torch.device("cuda:4" if kwargs['cuda'] else "cpu")
-
+    device = torch.device("cuda:1" if kwargs['cuda'] else "cpu")
     # if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
     #     torch.backends.cudnn.benchmark = False
     #     torch.backends.cudnn.deterministic = True
@@ -340,7 +339,7 @@ if __name__ == "__main__":
         # 'env_name': ['MiniWorld-FourRooms-v0'],
 
         'use_gae': [True],
-        'lr': [[0.5e-4, 2.5e-4]],
+        'lr': [[2.5e-4, 2.5e-4]],
         'clip_param': [0.1],
         'value_loss_coef': [0.5],
         'num_processes': [16],
@@ -350,15 +349,15 @@ if __name__ == "__main__":
         'use_linear_lr_decay': [True],
         'entropy_coef': [[0.005, 0.005]],
         'num_env_steps': [50000000],
-        'bonus1': [0],
-        'cuda': [True],
-        'proj_name': ['debug-car'],
-        'gif_save_interval': [300],
-        'note': ['alternate'],
+        'bonus1': [1, 0.01],
+        'cuda': [False],
+        'proj_name': ['debug-car2'],
+        'gif_save_interval': [200],
+        'note': ['alternate, persistent same net'],
         'debug': [False],
-        'gate_input': ['obs'], #'obs' | 'hid'
+        'gate_input': ['hid'], #'obs' | 'hid'
         'persistent': [True],
-        'scale': [1],
+        'scale': [0.7],
         'hidden_size': [128],
         'always_zero': [False],
         'pred_loss': [False],
@@ -366,7 +365,7 @@ if __name__ == "__main__":
         'save_dir': [''],
         'pred_mode': ['pred_model'], #'pred_model' | 'pos_enc'
         'no_bonus': [0],
-        'fixed_probability': [0.8],
+        'fixed_probability': [None],
         }
 
     run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)

@@ -64,15 +64,6 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
                     real_obs_height, real_obs_width = int(resolution_scale*obs_height), int(resolution_scale*obs_width)
                     super().__init__(obs_height=real_obs_height, obs_width=real_obs_width)
 
-                # def step(self, action):
-                #     obs, reward, done, info = super().step(action)
-                #
-                #     if self.near(self.box):
-                #         reward += self._reward()
-                #         done = True
-                #
-                #     return obs, reward, done, info
-
                 def full_obs(self):
                     """
                     actually just a change of view, change it in the future"""
