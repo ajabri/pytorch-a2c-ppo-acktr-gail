@@ -274,8 +274,6 @@ class PositionalEncoding(nn.Module):
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         self.pe = pe
-        # pe = pe.unsqueeze(0).transpose(0, 1)
-        # self.register_buffer('pe', pe)
 
     def forward(self, x, step_indices):
         if step_indices.is_cuda:

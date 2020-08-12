@@ -13,7 +13,6 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from a2c_ppo_acktr import algo, utils
-# from a2c_ppo_acktr.algo import gail
 from a2c_ppo_acktr.arguments import get_args
 from a2c_ppo_acktr.envs import make_vec_envs
 from a2c_ppo_acktr.model import OpsPolicy
@@ -334,7 +333,8 @@ if __name__ == "__main__":
         'algo': ['ppo'],
         'seed': [111],
         # 'env_name': ['MiniWorld-YMaze-v0'],
-        'env_name': ['CarRacing-v0'],
+        # 'env_name': ['CarRacing-v0'],
+        'env_name': ['FetchReach-v1'],
         # 'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
         # 'env_name': ['MiniWorld-FourRooms-v0'],
 
@@ -349,7 +349,7 @@ if __name__ == "__main__":
         'use_linear_lr_decay': [True],
         'entropy_coef': [[0.005, 0.005]],
         'num_env_steps': [50000000],
-        'bonus1': [1, 0.01],
+        'bonus1': [0],
         'cuda': [False],
         'proj_name': ['debug-car2'],
         'gif_save_interval': [200],
@@ -357,9 +357,9 @@ if __name__ == "__main__":
         'debug': [False],
         'gate_input': ['hid'], #'obs' | 'hid'
         'persistent': [True],
-        'scale': [0.7],
+        'scale': [1],
         'hidden_size': [128],
-        'always_zero': [False],
+        'always_zero': [True],
         'pred_loss': [False],
         'image_stack': [False],
         'save_dir': [''],
