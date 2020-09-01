@@ -136,10 +136,15 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
             else:
                 raise NotImplementedError("resolution needs to be changed.")
         else:
-            st()
             env = gym.make(env_id)
-            if len(observation_space.shape) == 3:
-                env = ResizeObservation(env, prop=resolution_scale)
+            # if env.observation_space.shape == None:
+            #     env.env.reward_type="dense"
+            #     env = ObservationOnlyWrapper(env)
+            # elif len(env.observation_space.shape) == 3:
+            #     env = ResizeObservation(env, prop=resolution_scale)
+            env = ResizeObservation(env, prop=resolution_scale)
+
+            env, obs_interval, predict_interval, no_op=False, delta_pos=False
 
 
         is_atari = hasattr(gym.envs, 'atari') and isinstance(
@@ -169,13 +174,10 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
         elif env_id.startswith("MiniWorld"):
             env = TransposeImage(env, op=[2, 0, 1])
             return env
-        elif len(env.observation_space.shape) == 3:
-            env = TransposeImage(env, op=[2, 0, 1])
-            return env
 
         # If the input has shape (W,H,3), wrap for PyTorch convolutions
         obs_shape = env.observation_space.shape
-        if len(obs_shape) == 3 and obs_shape[2] in [1, 3]:
+        if obs_shape != None and len(obs_shape) == 3 and obs_shape[2] in [1, 3]:
             env = TransposeImage(env, op=[2, 0, 1])
 
         return env

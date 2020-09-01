@@ -34,7 +34,7 @@ class ClassEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 INSTANCE_TYPE = 'c4.4xlarge'
-EXP_NAME = 'async/car3'
+EXP_NAME = 'async/gym-manipulate4'
 
 def main(**kwargs):
     args = get_args()
@@ -301,42 +301,50 @@ def main(**kwargs):
 
 
             if not kwargs['debug']:
-                if (j % 2) == 0 or True:
+                if (j % 2) == 0:
                     wandb.log(dict(ent1=dist_entropy1, val1=value_loss1, aloss1=action_loss1,))
                     print("ent1 {:.4f}, val1 {:.4f}, loss1 {:.4f}\n".format(
                         dist_entropy1, value_loss1, action_loss1))
-                if (j % 2) == 1 or True:
+                if (j % 2) == 1:
                     wandb.log(dict(ent2=dist_entropy2, val2=value_loss2, aloss2=action_loss2, prederr2=pred_err2))
                     print("ent2 {:.4f}, val2 {:.4f}, loss2 {:.4f}, prederr2 {:.4f}\n".format(
                         dist_entropy2, value_loss2, action_loss2, pred_err2))
 
                 wandb.log(dict(mean_gt=rollouts[0].actions.float().mean().item()))
 
-        if j % kwargs['gif_save_interval'] == 0 and not kwargs['debug']:
-            img_list = save_gif(actor_critic, kwargs['env_name'], kwargs['seed'],
-                         kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
-                         persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
-                         resolution_scale = kwargs['scale'], image_stack=kwargs['image_stack'])
-            if kwargs['env_name'].startswith("Mini"):
-                wandb.log({"visualization %s" % j: wandb.Image(img_list[0])})
-                wandb.log({"video %s" % j: wandb.Video(img_list[1], fps=4, format="gif")})
-                wandb.log(dict(eval_mean_reward=img_list[-2]))
-                wandb.log(dict(eval_mean_gt=img_list[-1]))
-            else:
-                wandb.log({"video %s" % j: wandb.Video(img_list[0], fps=4, format="gif")})
-                wandb.log(dict(eval_mean_reward=img_list[-2]))
-                wandb.log(dict(eval_mean_gt=img_list[-1]))
+        # if j % kwargs['gif_save_interval'] == 0 and not kwargs['debug'] and :
+        #     img_list = save_gif(actor_critic, kwargs['env_name'], kwargs['seed'],
+        #                  kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
+        #                  persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
+        #                  resolution_scale = kwargs['scale'], image_stack=kwargs['image_stack'])
+        #     if kwargs['env_name'].startswith("Mini"):
+        #         wandb.log({"visualization %s" % j: wandb.Image(img_list[0])})
+        #         wandb.log({"video %s" % j: wandb.Video(img_list[1], fps=4, format="gif")})
+        #         wandb.log(dict(eval_mean_reward=img_list[-2]))
+        #         wandb.log(dict(eval_mean_gt=img_list[-1]))
+        #     else:
+        #         wandb.log({"video %s" % j: wandb.Video(img_list[0], fps=4, format="gif")})
+        #         wandb.log(dict(eval_mean_reward=img_list[-2]))
+        #         wandb.log(dict(eval_mean_gt=img_list[-1]))
+
+        if not kwargs['debug'] and j % kwargs['gif_save_interval'] == 0:
+            success_rate, eval_reward = evaluate_actions(actor_critic, kwargs['env_name'], kwargs['seed'],
+                             kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
+                             persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
+                             resolution_scale = kwargs['scale'], image_stack=kwargs['image_stack'])
+            wandb.log(dict(success_rate=success_rate))
+            wandb.log(dict(eval_mean_reward=eval_reward))
 
 
 if __name__ == "__main__":
     sweep_params = {
         'algo': ['ppo'],
-        'seed': [111],
+        'seed': [111, 222],
         # 'env_name': ['MiniWorld-YMaze-v0'],
         # 'env_name': ['CarRacing-v0'],
-        'env_name': ['FetchReach-v1'],
+        # 'env_name': ['FetchReach-v1', 'FetchPickAndPlace-v1', 'FetchPush-v1', 'FetchSlide-v1'],
         # 'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
-        # 'env_name': ['MiniWorld-FourRooms-v0'],
+        'env_name': ['MiniWorld-FourRooms-v0'],
 
         'use_gae': [True],
         'lr': [[2.5e-4, 2.5e-4]],
@@ -351,15 +359,15 @@ if __name__ == "__main__":
         'num_env_steps': [50000000],
         'bonus1': [0],
         'cuda': [False],
-        'proj_name': ['debug-car2'],
-        'gif_save_interval': [200],
-        'note': ['alternate, persistent same net'],
+        'proj_name': ['debug'],
+        'gif_save_interval': [10],
+        'note': [''],
         'debug': [False],
         'gate_input': ['hid'], #'obs' | 'hid'
         'persistent': [True],
         'scale': [1],
         'hidden_size': [128],
-        'always_zero': [True],
+        'always_zero': [False],
         'pred_loss': [False],
         'image_stack': [False],
         'save_dir': [''],

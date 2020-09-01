@@ -8,6 +8,7 @@ import cv2
 import imageio
 import os
 import gym
+from collections import deque
 
 
 def act(actor_critic, obs, recurrent_hidden_states, masks, **kwargs):
@@ -17,6 +18,89 @@ def act(actor_critic, obs, recurrent_hidden_states, masks, **kwargs):
             masks, **kwargs)
 
         return value, action, action_log_prob, recurrent_hidden_states
+
+
+def evaluate_actions(actor_critic,
+             env_name,
+             seed,
+             num_processes,
+             device,
+             epoch,
+             bonus1,
+             save_dir = './saved',
+             tile_size = 1,
+             persistent = False,
+             always_zero = False,
+             resolution_scale = 1,
+             image_stack=False):
+    eval_envs = make_vec_envs(env_name, seed + num_processes, num_processes,
+                              None, '', device, True, get_pixel = True, resolution_scale = resolution_scale, image_stack=image_stack)
+
+    eval_episode_rewards = []
+    success_rates = deque(maxlen=count)
+    obs = eval_envs.reset()
+    step_indices = torch.from_numpy(np.array([0 for _ in range(num_processes)])).to(device)
+
+    if persistent:
+        recurrent_hidden_size = actor_critic[0].recurrent_hidden_state_size * 2
+    else:
+        recurrent_hidden_size = actor_critic[0].recurrent_hidden_state_size
+
+    eval_recurrent_hidden_states = torch.zeros(
+        num_processes, recurrent_hidden_size, device=device)
+
+    eval_masks = torch.zeros(num_processes, 1, device=device)
+
+    all_paths = [[] for _ in range(num_processes)]
+    count = 10
+
+    dicrete_action = (eval_envs.action_space.__class__.__name__ == "Discrete")
+    while len(eval_episode_rewards) < count: #increase it so that now all the episodes termiante
+        value1, action1, action_log_prob1, recurrent_hidden_states1 = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
+
+        if always_zero:
+            action1 = torch.zeros(action1.shape).to(device).long()
+
+        if len(eval_episode_rewards) == 0:
+            if dicrete_action:
+                action2 = torch.zeros(action1.shape).to(device).long()
+            else:
+                action2 = torch.zeros((num_processes, eval_envs.action_space.shape[0])).to(device).long()
+
+        if dicrete_action:
+            last_action = 1 + action2
+        else:
+            last_action = action2.float()
+            action1 = action1.float()
+
+        value2, action2, action_log_prob2, recurrent_hidden_states2 = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
+            info=[torch.cat([action1, last_action], dim=1), step_indices])
+
+        action = action2
+        eval_recurrent_hidden_states = recurrent_hidden_states2
+
+        obs, reward, done, infos = eval_envs.step(action)
+        step_indices = torch.from_numpy(np.array([info['step_index'] for info in infos])).to(device)
+
+        if action1.shape[-1] > 1:
+            gate = action1[:, 0].byte().squeeze()
+        else:
+            gate = action1.byte().squeeze()
+
+        eval_masks = torch.tensor(
+            [[0.0] if done_ else [1.0] for done_ in done],
+            dtype=torch.float32,
+            device=device)
+
+        for info in infos:
+            if 'episode' in info.keys():
+                eval_episode_rewards.append(info['episode']['r'])
+            if is_success in info.keys():
+                success_rates.append(info['is_success'])
+    eval_envs.close()
+
+    return np.mean(success_rates), np.mean(eval_episode_rewards)
+
 
 
 def save_gif(actor_critic,
