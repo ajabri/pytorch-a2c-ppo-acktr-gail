@@ -274,6 +274,8 @@ class PositionalEncoding(nn.Module):
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         self.pe = pe
+        # pe = pe.unsqueeze(0).transpose(0, 1)
+        # self.register_buffer('pe', pe)
 
     def forward(self, x, step_indices):
         if step_indices.is_cuda:
@@ -294,21 +296,22 @@ class OpsCell(nn.Module):
         self.pred_mode = pred_mode
 
         if self.persistent:
-            self.memory = nn.Sequential(
-                init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh(),
-                init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh()
-            )
+            cap_in_dim = obs_dim + hidden_size
+            cap_out_dim = 2 * hidden_size
+        else:
+            cap_in_dim = obs_dim
+            cap_out_dim = hidden_size
 
         self.capture = nn.Sequential(
-            init_(nn.Linear(obs_dim, hidden_size)), nn.Tanh(),
-            init_(nn.Linear(hidden_size, hidden_size)), nn.Tanh()
+            init_(nn.Linear(cap_in_dim, hidden_size)), nn.Tanh(),
+            init_(nn.Linear(hidden_size, cap_out_dim)), nn.Tanh()
         )
 
         if self.pred_mode == 'pred_model':
             # forward model
-            self.predict = Dynamics(obs_dim=hidden_size, act_dim=act_dim, hidden_size=hidden_size)
-        # elif self.pred_mode == 'pos_enc':
-        #     self.predict = PositionalEncoding(d_model=hidden_size)
+            self.predict = Dynamics(obs_dim=cap_out_dim, act_dim=act_dim, hidden_size=cap_out_dim)
+        elif self.pred_mode == 'pos_enc':
+            self.predict = PositionalEncoding(d_model=cap_out_dim)
 
         for name, param in self.predict.named_parameters():
             if 'bias' in name:
@@ -332,17 +335,19 @@ class OpsCell(nn.Module):
 
         for t in range(g.shape[0]):
             if self.persistent:
-                z1_1 = self.capture(x[t]) #2 * hidden_size
+                z1 = self.capture(torch.cat((x[t], h2[0]), dim = -1)) #2 * hidden_size
                 if self.pred_mode == 'pred_model':
-                    z2_1 = self.predict(h1[0], a[t]) #2 * hidden_size
-                persistent_memory = self.memory(h2[0])
+                    z2 = self.predict(torch.cat((h1[0], h2[0]), dim = -1), a[t]) #2 * hidden_size
                 # elif self.pred_mode == 'pos_enc':
                 #     z2 = self.predict(torch.cat((h1[0], h2[0]), dim = -1), step_indices[t])
+
+                z1_1, z1_2 = torch.chunk(z1, 2, dim = -1)
+                z2_1, z2_2 = torch.chunk(z2, 2, dim = -1)
 
                 h1 = (1-g[t]) * z1_1 + g[t] * z2_1
                 h1 = h1.unsqueeze(0)
 
-                h2 = persistent_memory
+                h2 = (1-g[t]) * z1_2 + g[t] * z2_2
                 h2 = h2.unsqueeze(0)
 
                 outs.append(h1)
@@ -466,10 +471,7 @@ class OpsBase(NNBase):
             g, a = info[0][:, 0].unsqueeze(dim=-1), info[0][:, 1:]
             step_indices = info[1]
             if self.fixed_probability != None:
-                if g.is_cuda:
-                    g = torch.cat([self.bernoulli.sample() for _ in range(g.shape[0])]).unsqueeze(dim=-1).to(g.get_device())
-                else:
-                    g = torch.cat([self.bernoulli.sample() for _ in range(g.shape[0])]).unsqueeze(dim=-1)
+                g = torch.cat([self.bernoulli.sample() for _ in range(g.shape[0])]).unsqueeze(dim=-1).to(g.get_device())
             if self.discrete_action:
                 # consider embedding all observations and actions before passing to gru...
                 a = self.act_emb(a.squeeze(-1).long())

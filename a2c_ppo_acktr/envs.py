@@ -36,7 +36,7 @@ except ImportError:
 from gym.wrappers import FlattenObservation
 from a2c_ppo_acktr.wrappers import *
 
-def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False, resolution_scale = 1.):
+def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False, resolution_scale = 1., async_params=[1, 1, False]):
     def _thunk():
         if env_id.startswith("dm"):
             _, domain, task = env_id.split('.')
@@ -89,22 +89,6 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
                     real_obs_height, real_obs_width = int(resolution_scale*obs_height), int(resolution_scale*obs_width)
                     super().__init__(obs_height=real_obs_height, obs_width=real_obs_width)
 
-                # def step(self, action):
-                #     obs, reward, done, info = super().step(action)
-                #
-                #     # define a dense reward for this environment
-                #     if self.near(self.box):
-                #     #     reward += self._reward()
-                #         done = True
-                #         # reward += 200
-                #     ent0, ent1 = self.box, self.agent
-                #     reward -= (np.abs(ent0.pos[0] - ent1.pos[0]) + np.abs(ent0.pos[1] - ent1.pos[1]))
-                #
-                #     # dist = np.linalg.norm(ent0.pos - ent1.pos)
-                #     # return dist < ent0.radius + ent1.radius + 1.1 * self.max_forward_step
-                #
-                #     return obs, reward, done, info
-
                 def full_obs(self):
                     top_down_view = self.render_top_view()
                     top_down_view2 = top_down_view.copy()
@@ -135,6 +119,8 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
                 env = YMazeNew(resolution_scale=resolution_scale)
             else:
                 raise NotImplementedError("resolution needs to be changed.")
+            obs_interval, predict_interval, no_op = async_params
+            env = AsyncWrapper(env, obs_interval=obs_interval, predict_interval=predict_interval, no_op=no_op)
         else:
             env = gym.make(env_id)
             # if env.observation_space.shape == None:
@@ -144,7 +130,7 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
             #     env = ResizeObservation(env, prop=resolution_scale)
             env = ResizeObservation(env, prop=resolution_scale)
 
-            env, obs_interval, predict_interval, no_op=False, delta_pos=False
+            # env, obs_interval, predict_interval, no_op=False, delta_pos=False
 
 
         is_atari = hasattr(gym.envs, 'atari') and isinstance(
@@ -195,9 +181,10 @@ def make_vec_envs(env_name,
                   num_frame_stack=None,
                   get_pixel=False,
                   resolution_scale=1.,
-                  image_stack=False):
+                  image_stack=False,
+                  async_params=[1, 1, False]):
     envs = [
-        make_env(env_name, seed, i, log_dir, allow_early_resets, get_pixel=get_pixel, resolution_scale=resolution_scale)
+        make_env(env_name, seed, i, log_dir, allow_early_resets, get_pixel=get_pixel, resolution_scale=resolution_scale, async_params=async_params)
         for i in range(num_processes)
     ]
 

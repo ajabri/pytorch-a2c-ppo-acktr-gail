@@ -37,6 +37,7 @@ def evaluate_actions(actor_critic,
                               None, '', device, True, get_pixel = True, resolution_scale = resolution_scale, image_stack=image_stack)
 
     eval_episode_rewards = []
+    count = 10
     success_rates = deque(maxlen=count)
     obs = eval_envs.reset()
     step_indices = torch.from_numpy(np.array([0 for _ in range(num_processes)])).to(device)
@@ -52,7 +53,6 @@ def evaluate_actions(actor_critic,
     eval_masks = torch.zeros(num_processes, 1, device=device)
 
     all_paths = [[] for _ in range(num_processes)]
-    count = 10
 
     dicrete_action = (eval_envs.action_space.__class__.__name__ == "Discrete")
     while len(eval_episode_rewards) < count: #increase it so that now all the episodes termiante
@@ -115,7 +115,8 @@ def save_gif(actor_critic,
              persistent = False,
              always_zero = False,
              resolution_scale = 1,
-             image_stack=False):
+             image_stack=False,
+             async_params=[1, 1, False]):
     eval_envs = make_vec_envs(env_name, seed + num_processes, num_processes,
                               None, '', device, True, get_pixel = True, resolution_scale = resolution_scale, image_stack=image_stack)
 
@@ -166,7 +167,7 @@ def save_gif(actor_critic,
         action = action2
         eval_recurrent_hidden_states = recurrent_hidden_states2
 
-        obs, reward, done, infos = eval_envs.step(action)
+        obs, reward, done, infos = eval_envs.step(torch.cat((action1, action), dim=-1))
         step_indices = torch.from_numpy(np.array([info['step_index'] for info in infos])).to(device)
 
         imgs = np.array(eval_envs.full_obs())

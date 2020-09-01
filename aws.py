@@ -68,7 +68,8 @@ def main(**kwargs):
     torch.set_num_threads(1)
     envs = make_vec_envs(kwargs['env_name'], kwargs['seed'], kwargs['num_processes'],
                          kwargs['gamma'], log_dir, device, False,
-                         resolution_scale=kwargs['scale'], image_stack=kwargs['image_stack'])
+                         resolution_scale=kwargs['scale'], image_stack=kwargs['image_stack'],
+                         async_params=[kwargs['obs_interval'], kwargs['predict_interval'], kwargs['no_op']])
 
     # flip, flip1 = False, False
     discrete_action = envs.action_space.__class__.__name__ == "Discrete"
@@ -188,7 +189,7 @@ def main(**kwargs):
             recurrent_hidden_states = recurrent_hidden_states2
 
             # Obser reward and next obs
-            obs, reward, done, infos = envs.step(action)
+            obs, reward, done, infos = envs.step(torch.cat((action1, action2), dim=-1))
 
             for info in infos:
                 if 'episode' in info.keys():
@@ -205,7 +206,6 @@ def main(**kwargs):
                 scaled_reward = reward
             else:
                 scaled_reward = (action1 * kwargs['bonus1']).to(device) + reward.to(device)
-            # scaled_reward = (action1 * kwargs['bonus3']).to(device) * torch.abs(reward).to(device) + reward.to(device)
 
             rollouts[0].insert(obs, recurrent_hidden_states, action1,
                             action_log_prob1, value1, scaled_reward, masks, bad_masks,
@@ -312,39 +312,41 @@ def main(**kwargs):
 
                 wandb.log(dict(mean_gt=rollouts[0].actions.float().mean().item()))
 
-        # if j % kwargs['gif_save_interval'] == 0 and not kwargs['debug'] and :
-        #     img_list = save_gif(actor_critic, kwargs['env_name'], kwargs['seed'],
-        #                  kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
-        #                  persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
-        #                  resolution_scale = kwargs['scale'], image_stack=kwargs['image_stack'])
-        #     if kwargs['env_name'].startswith("Mini"):
-        #         wandb.log({"visualization %s" % j: wandb.Image(img_list[0])})
-        #         wandb.log({"video %s" % j: wandb.Video(img_list[1], fps=4, format="gif")})
-        #         wandb.log(dict(eval_mean_reward=img_list[-2]))
-        #         wandb.log(dict(eval_mean_gt=img_list[-1]))
-        #     else:
-        #         wandb.log({"video %s" % j: wandb.Video(img_list[0], fps=4, format="gif")})
-        #         wandb.log(dict(eval_mean_reward=img_list[-2]))
-        #         wandb.log(dict(eval_mean_gt=img_list[-1]))
+        if j % kwargs['gif_save_interval'] == 0 and not kwargs['debug']:
+            img_list = save_gif(actor_critic, kwargs['env_name'], kwargs['seed'],
+                         kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
+                         persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
+                         resolution_scale = kwargs['scale'], image_stack=kwargs['image_stack'],
+                         async_params=[kwargs['obs_interval'], kwargs['predict_interval'], kwargs['no_op']])
 
-        if not kwargs['debug'] and j % kwargs['gif_save_interval'] == 0:
-            success_rate, eval_reward = evaluate_actions(actor_critic, kwargs['env_name'], kwargs['seed'],
-                             kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
-                             persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
-                             resolution_scale = kwargs['scale'], image_stack=kwargs['image_stack'])
-            wandb.log(dict(success_rate=success_rate))
-            wandb.log(dict(eval_mean_reward=eval_reward))
+            if kwargs['env_name'].startswith("Mini"):
+                wandb.log({"visualization %s" % j: wandb.Image(img_list[0])})
+                wandb.log({"video %s" % j: wandb.Video(img_list[1], fps=4, format="gif")})
+                wandb.log(dict(eval_mean_reward=img_list[-2]))
+                wandb.log(dict(eval_mean_gt=img_list[-1]))
+            else:
+                wandb.log({"video %s" % j: wandb.Video(img_list[0], fps=4, format="gif")})
+                wandb.log(dict(eval_mean_reward=img_list[-2]))
+                wandb.log(dict(eval_mean_gt=img_list[-1]))
+
+        # if not kwargs['debug'] and j % kwargs['gif_save_interval'] == 0:
+        #     success_rate, eval_reward = evaluate_actions(actor_critic, kwargs['env_name'], kwargs['seed'],
+        #                      kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
+        #                      persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
+        #                      resolution_scale = kwargs['scale'], image_stack=kwargs['image_stack'])
+        #     wandb.log(dict(success_rate=success_rate))
+        #     wandb.log(dict(eval_mean_reward=eval_reward))
 
 
 if __name__ == "__main__":
     sweep_params = {
         'algo': ['ppo'],
         'seed': [111, 222],
-        # 'env_name': ['MiniWorld-YMaze-v0'],
+        'env_name': ['MiniWorld-YMaze-v0'],
         # 'env_name': ['CarRacing-v0'],
         # 'env_name': ['FetchReach-v1', 'FetchPickAndPlace-v1', 'FetchPush-v1', 'FetchSlide-v1'],
         # 'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
-        'env_name': ['MiniWorld-FourRooms-v0'],
+        # 'env_name': ['MiniWorld-FourRooms-v0'],
 
         'use_gae': [True],
         'lr': [[2.5e-4, 2.5e-4]],
@@ -359,11 +361,11 @@ if __name__ == "__main__":
         'num_env_steps': [50000000],
         'bonus1': [0],
         'cuda': [False],
-        'proj_name': ['debug'],
-        'gif_save_interval': [10],
+        'proj_name': ['async-maze'],
+        'gif_save_interval': [50],
         'note': [''],
         'debug': [False],
-        'gate_input': ['hid'], #'obs' | 'hid'
+        'gate_input': ['hid', 'obs'], #'obs' | 'hid'
         'persistent': [True],
         'scale': [1],
         'hidden_size': [128],
@@ -374,9 +376,13 @@ if __name__ == "__main__":
         'pred_mode': ['pred_model'], #'pred_model' | 'pos_enc'
         'no_bonus': [0],
         'fixed_probability': [None],
+        'obs_interval': [1, 2],
+        'predict_interval': [1],
+        'no_op': [False],
         }
 
     run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)
 
     # python aws.py --mode ec2 --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python'
+    # python aws.py --mode local_docker --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python'
     # python aws.py --mode local_docker --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python3' --docker_command "--user vioichigo --workdir /home/vioichigo/code --gpus all"
