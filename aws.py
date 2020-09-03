@@ -34,7 +34,7 @@ class ClassEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, o)
 
 INSTANCE_TYPE = 'c4.4xlarge'
-EXP_NAME = 'async/gym-manipulate4'
+EXP_NAME = 'async/car3'
 
 def main(**kwargs):
     args = get_args()
@@ -92,10 +92,10 @@ def main(**kwargs):
 
         if is_leaf:
             lr = kwargs['lr'][1]
-            entropy_coef = kwargs['entropy_coef'][1]
         else:
             lr = kwargs['lr'][0]
-            entropy_coef = kwargs['entropy_coef'][0]
+
+        entropy_coef = kwargs['entropy_coef']
 
         if kwargs['algo'] == 'ppo':
             agent = algo.PPO(
@@ -235,10 +235,10 @@ def main(**kwargs):
 
             return value_loss, action_loss, dist_entropy, pred_err
 
-        if j % 2 == 0:
+        if j % 2 == 0 or True:
             print("updating agent 0")
             value_loss1, action_loss1, dist_entropy1, pred_err1 = update(0)
-        if (j % 2) == 1:
+        if (j % 2) == 1 or True:
             print("updating agent 1")
             # use updated pi_1
             _, action1, _, _ = actor_critic[0].act(
@@ -342,8 +342,9 @@ if __name__ == "__main__":
     sweep_params = {
         'algo': ['ppo'],
         'seed': [111, 222],
-        'env_name': ['MiniWorld-YMaze-v0'],
-        # 'env_name': ['CarRacing-v0'],
+        # 'env_name': ['MiniWorld-YMaze-v0'],
+        # 'env_name': ['MiniWorld-CollectHealth-v0'],
+        'env_name': ['CarRacing-v0'],
         # 'env_name': ['FetchReach-v1', 'FetchPickAndPlace-v1', 'FetchPush-v1', 'FetchSlide-v1'],
         # 'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
         # 'env_name': ['MiniWorld-FourRooms-v0'],
@@ -354,20 +355,24 @@ if __name__ == "__main__":
         'value_loss_coef': [0.5],
         'num_processes': [16],
         'num_steps': [512],
+        # 'num_steps': [1024],
         'num_mini_batch': [4],
         'log_interval': [1],
         'use_linear_lr_decay': [True],
-        'entropy_coef': [[0.005, 0.005]],
+        'entropy_coef': [0.005],
         'num_env_steps': [50000000],
         'bonus1': [0],
         'cuda': [False],
-        'proj_name': ['async-maze'],
-        'gif_save_interval': [50],
+        # 'proj_name': ['async-maze'],
+        # 'proj_name': ['async-health'],
+        'proj_name': ['async-car'],
+        # 'proj_name': ['debug'],
+        'gif_save_interval': [200],
         'note': [''],
         'debug': [False],
-        'gate_input': ['hid', 'obs'], #'obs' | 'hid'
+        'gate_input': ['hid'], #'obs' | 'hid'
         'persistent': [True],
-        'scale': [1],
+        'scale': [0.7],
         'hidden_size': [128],
         'always_zero': [False],
         'pred_loss': [False],
@@ -376,9 +381,9 @@ if __name__ == "__main__":
         'pred_mode': ['pred_model'], #'pred_model' | 'pos_enc'
         'no_bonus': [0],
         'fixed_probability': [None],
-        'obs_interval': [1, 2],
+        'obs_interval': [2, 3, 4],
         'predict_interval': [1],
-        'no_op': [False],
+        'no_op': [False, True],
         }
 
     run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)

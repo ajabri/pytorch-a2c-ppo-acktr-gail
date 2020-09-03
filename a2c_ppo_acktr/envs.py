@@ -49,11 +49,13 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
                 # env = RGBImgPartialObsWrapper(env, tile_size = 1)
                 env = ImgObsWrapper(env)
         elif env_id.startswith("MiniWorld"):
+            no_op_action = 7
             import pyglet
             try:
                 import gym_miniworld
                 from gym_miniworld.miniworld import MiniWorldEnv, Room
                 from gym_miniworld.envs.ymaze import YMaze
+                from gym_miniworld.envs.collecthealth import CollectHealth
                 from gym_miniworld.envs.fourrooms import FourRooms
             except pyglet.canvas.xlib.NoSuchDisplayException:
                 pass
@@ -71,16 +73,31 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
                     top_down_view2 = top_down_view.copy()
                     r, g, b = top_down_view[:, :, 0], top_down_view[:, :, 1], top_down_view[:, :, 2]
                     indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
-                    # ratio = r[indices].reshape((-1, 1))
-                    ratio = 255
-                    top_down_view2[indices] = ratio * np.array([0, 0, 1])
-                    top_down_view[indices] = ratio * np.array([1, 0, 0])
+                    top_down_view2[indices] = np.array([0, 0, 255])
+                    top_down_view[indices] = np.array([255, 0, 0])
                     obs = self.render_obs()
                     obs2 = obs.copy()
-                    r, g, b = obs2[:, :, 0], obs2[:, :, 1], obs2[:, :, 2]
-                    indices = np.logical_and(r<200, np.logical_and(g<200, b<200))
-                    obs2[indices] = obs2[indices] + np.array([0, 0, 100])
-                    # [:, :, -1] += 125
+                    obs2 = obs2//4
+                    return top_down_view2, top_down_view, obs2, obs
+
+            class CollectHealthNew(CollectHealth):
+                def __init__(self, resolution_scale=1.):
+                    obs_height, obs_width = 60, 80
+                    real_obs_height, real_obs_width = int(resolution_scale*obs_height), int(resolution_scale*obs_width)
+                    super().__init__(obs_height=real_obs_height, obs_width=real_obs_width)
+
+                def full_obs(self):
+                    """
+                    actually just a change of view, change it in the future"""
+                    top_down_view = self.render_top_view()
+                    top_down_view2 = top_down_view.copy()
+                    r, g, b = top_down_view[:, :, 0], top_down_view[:, :, 1], top_down_view[:, :, 2]
+                    indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
+                    top_down_view2[indices] = np.array([0, 0, 255])
+                    top_down_view[indices] = np.array([255, 0, 0])
+                    obs = self.render_obs()
+                    obs2 = obs.copy()
+                    obs2 = obs2//4
                     return top_down_view2, top_down_view, obs2, obs
 
             class FourRoomsNew(FourRooms):
@@ -117,12 +134,14 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
                 env = FourRoomsNew(resolution_scale=resolution_scale)
             elif env_id.startswith("MiniWorld-YMaze"):
                 env = YMazeNew(resolution_scale=resolution_scale)
+            elif env_id.startswith("MiniWorld-CollectHealth"):
+                env = CollectHealthNew(resolution_scale=resolution_scale)
             else:
                 raise NotImplementedError("resolution needs to be changed.")
-            obs_interval, predict_interval, no_op = async_params
-            env = AsyncWrapper(env, obs_interval=obs_interval, predict_interval=predict_interval, no_op=no_op)
+
         else:
             env = gym.make(env_id)
+            no_op_action = np.zeros(env.action_space.shape)
             # if env.observation_space.shape == None:
             #     env.env.reward_type="dense"
             #     env = ObservationOnlyWrapper(env)
@@ -131,6 +150,9 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
             env = ResizeObservation(env, prop=resolution_scale)
 
             # env, obs_interval, predict_interval, no_op=False, delta_pos=False
+
+        obs_interval, predict_interval, no_op = async_params
+        env = AsyncWrapper(env, obs_interval=obs_interval, predict_interval=predict_interval, no_op=no_op, no_op_action = no_op_action)
 
 
         is_atari = hasattr(gym.envs, 'atari') and isinstance(
