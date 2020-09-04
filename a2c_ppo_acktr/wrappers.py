@@ -6,6 +6,7 @@ from pdb import set_trace as st
 from gym import ObservationWrapper
 import numpy as np
 from gym import error, spaces
+from gym.utils import seeding
 
 
 class ImgObsWrapper(gym.core.ObservationWrapper):
@@ -133,6 +134,29 @@ class AsyncWrapper(gym.Wrapper):
             if self.which_obs == 'first':
                 obs = observations[0]
         return obs, reward, done, info
+
+
+class RobotSuiteWrapper(gym.Wrapper):
+    def __init__(self, env):
+        # missing variables below
+        env.reward_range = None
+        env.metadata = None
+        env.action_space = spaces.Box(-np.inf, np.inf, shape=(env.dof,), dtype='float32')
+        env.observation_space = spaces.Box(-np.inf, np.inf, shape=(env.camera_height, env.camera_width, 3), dtype='float32')
+        gym.Wrapper.__init__(self, env)
+
+    def seed(self, seed=None):
+        self.np_random, seed = seeding.np_random(seed)
+        return [seed]
+
+
+    def reset(self):
+        obs = self.env.reset()
+        return obs['image']
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        return obs['image'], reward, done, info
 
 
 

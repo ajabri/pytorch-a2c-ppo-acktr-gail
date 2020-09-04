@@ -9,6 +9,7 @@ import cv2
 from gym.spaces.box import Box
 import sys
 sys.path.append('/home/vioichigo/baselines')
+from gym.envs.registration import EnvSpec
 from baselines import bench
 from baselines.common.atari_wrappers import make_atari, wrap_deepmind
 from baselines.common.vec_env import VecEnvWrapper
@@ -32,6 +33,10 @@ try:
 except ImportError:
     pass
 
+try:
+    import robosuite as suite
+except ImportError:
+    pass
 
 from gym.wrappers import FlattenObservation
 from a2c_ppo_acktr.wrappers import *
@@ -138,6 +143,24 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
                 env = CollectHealthNew(resolution_scale=resolution_scale)
             else:
                 raise NotImplementedError("resolution needs to be changed.")
+        elif env_id.startswith("Sawyer"):
+            env = suite.make(
+                    env_id,
+                    has_renderer=False,          # no on-screen renderer
+                    has_offscreen_renderer=True, # off-screen renderer is required for camera observations
+                    ignore_done=False,            # (optional) never terminates episode
+                    use_camera_obs=True,         # use camera observations
+                    camera_height=84,            # set camera height
+                    camera_width=84,             # set camera width
+                    camera_name='agentview',     # use "agentview" camera
+                    use_object_obs=False,        # no object feature when training on pixels
+                    reward_shaping=True          # (optional) using a shaping reward
+                )
+            no_op_action = np.zeros(env.dof)
+            env.spec = EnvSpec(env_id + '-v0')
+
+            env = RobotSuiteWrapper(env)
+            env = ResizeObservation(env, prop=resolution_scale)
 
         else:
             env = gym.make(env_id)

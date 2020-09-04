@@ -312,7 +312,7 @@ def main(**kwargs):
 
                 wandb.log(dict(mean_gt=rollouts[0].actions.float().mean().item()))
 
-        if j % kwargs['gif_save_interval'] == 0 and not kwargs['debug']:
+        if j % kwargs['gif_save_interval'] == 0 and not kwargs['debug'] and (kwargs['env_name'].startswith("Car") or kwargs['env_name'].startswith("Mini")):
             img_list = save_gif(actor_critic, kwargs['env_name'], kwargs['seed'],
                          kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
                          persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
@@ -344,7 +344,8 @@ if __name__ == "__main__":
         'seed': [111, 222],
         # 'env_name': ['MiniWorld-YMaze-v0'],
         # 'env_name': ['MiniWorld-CollectHealth-v0'],
-        'env_name': ['CarRacing-v0'],
+        # 'env_name': ['CarRacing-v0'],
+        'env_name': ['SawyerLift'],
         # 'env_name': ['FetchReach-v1', 'FetchPickAndPlace-v1', 'FetchPush-v1', 'FetchSlide-v1'],
         # 'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
         # 'env_name': ['MiniWorld-FourRooms-v0'],
@@ -354,8 +355,8 @@ if __name__ == "__main__":
         'clip_param': [0.1],
         'value_loss_coef': [0.5],
         'num_processes': [16],
-        'num_steps': [512],
-        # 'num_steps': [1024],
+        # 'num_steps': [512],
+        'num_steps': [1024],
         'num_mini_batch': [4],
         'log_interval': [1],
         'use_linear_lr_decay': [True],
@@ -365,14 +366,14 @@ if __name__ == "__main__":
         'cuda': [False],
         # 'proj_name': ['async-maze'],
         # 'proj_name': ['async-health'],
-        'proj_name': ['async-car'],
-        # 'proj_name': ['debug'],
+        # 'proj_name': ['async-car'],
+        'proj_name': ['debug'],
         'gif_save_interval': [200],
         'note': [''],
         'debug': [False],
         'gate_input': ['hid'], #'obs' | 'hid'
         'persistent': [True],
-        'scale': [0.7],
+        'scale': [0.5],
         'hidden_size': [128],
         'always_zero': [False],
         'pred_loss': [False],
@@ -381,9 +382,9 @@ if __name__ == "__main__":
         'pred_mode': ['pred_model'], #'pred_model' | 'pos_enc'
         'no_bonus': [0],
         'fixed_probability': [None],
-        'obs_interval': [2, 3, 4],
+        'obs_interval': [1],
         'predict_interval': [1],
-        'no_op': [False, True],
+        'no_op': [False],
         }
 
     run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)
