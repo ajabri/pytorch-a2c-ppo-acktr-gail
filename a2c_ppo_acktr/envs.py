@@ -40,6 +40,7 @@ except ImportError:
 
 from gym.wrappers import FlattenObservation
 from a2c_ppo_acktr.wrappers import *
+import vizdoomgym
 
 def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False, resolution_scale = 1., async_params=[1, 1, False]):
     def _thunk():
@@ -162,17 +163,15 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
             env = RobotSuiteWrapper(env)
             env = ResizeObservation(env, prop=resolution_scale)
 
-        else:
+        elif env_id.startswith("Vizdoom"):
             env = gym.make(env_id)
-            no_op_action = np.zeros(env.action_space.shape)
-            # if env.observation_space.shape == None:
-            #     env.env.reward_type="dense"
-            #     env = ObservationOnlyWrapper(env)
-            # elif len(env.observation_space.shape) == 3:
-            #     env = ResizeObservation(env, prop=resolution_scale)
+            no_op_action = None
             env = ResizeObservation(env, prop=resolution_scale)
 
-            # env, obs_interval, predict_interval, no_op=False, delta_pos=False
+        else:
+            env = gym.make(env_id)
+            no_op_action = 0
+            env = ResizeObservation(env, prop=resolution_scale)
 
         obs_interval, predict_interval, no_op = async_params
         env = AsyncWrapper(env, obs_interval=obs_interval, predict_interval=predict_interval, no_op=no_op, no_op_action = no_op_action)

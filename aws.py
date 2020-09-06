@@ -46,10 +46,10 @@ def main(**kwargs):
     torch.manual_seed(kwargs['seed'])
     if kwargs['cuda']:
         torch.cuda.manual_seed_all(kwargs['seed'])
-    device = torch.device("cuda:1" if kwargs['cuda'] else "cpu")
-    # if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
-    #     torch.backends.cudnn.benchmark = False
-    #     torch.backends.cudnn.deterministic = True
+    device = torch.device("cuda:5" if kwargs['cuda'] else "cpu")
+    if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
 
     # log_dir = os.path.expanduser(kwargs['log_dir'])
     exp_dir = os.getcwd() + '/data/' + EXP_NAME
@@ -340,54 +340,57 @@ def main(**kwargs):
 
 if __name__ == "__main__":
     sweep_params = {
-        'algo': ['ppo'],
-        'seed': [111, 222],
-        # 'env_name': ['MiniWorld-YMaze-v0'],
-        # 'env_name': ['MiniWorld-CollectHealth-v0'],
-        # 'env_name': ['CarRacing-v0'],
-        'env_name': ['SawyerLift'],
-        # 'env_name': ['FetchReach-v1', 'FetchPickAndPlace-v1', 'FetchPush-v1', 'FetchSlide-v1'],
-        # 'env_name': ['MiniGrid-MultiRoom-N4-S5-v0'],
-        # 'env_name': ['MiniWorld-FourRooms-v0'],
+        'algo': 'ppo',
+        'seed': 111,
+        # 'env_name': 'MiniWorld-YMaze-v0',
+        # 'env_name': 'MiniWorld-CollectHealth-v0',
+        # 'env_name': 'CarRacing-v0',
+        # 'env_name': 'SawyerLift',
+        'env_name': 'VizdoomDefendLine-v0',
+        # 'env_name': 'VizdoomHealthGathering-v0',
+        # 'env_name': 'FetchReach-v1', 'FetchPickAndPlace-v1', 'FetchPush-v1', 'FetchSlide-v1',
+        # 'env_name': 'MiniGrid-MultiRoom-N4-S5-v0',
+        # 'env_name': 'MiniWorld-FourRooms-v0',
 
-        'use_gae': [True],
-        'lr': [[2.5e-4, 2.5e-4]],
-        'clip_param': [0.1],
-        'value_loss_coef': [0.5],
-        'num_processes': [16],
-        # 'num_steps': [512],
-        'num_steps': [1024],
-        'num_mini_batch': [4],
-        'log_interval': [1],
-        'use_linear_lr_decay': [True],
-        'entropy_coef': [0.005],
-        'num_env_steps': [50000000],
-        'bonus1': [0],
-        'cuda': [False],
-        # 'proj_name': ['async-maze'],
-        # 'proj_name': ['async-health'],
-        # 'proj_name': ['async-car'],
-        'proj_name': ['debug'],
-        'gif_save_interval': [200],
-        'note': [''],
-        'debug': [False],
-        'gate_input': ['hid'], #'obs' | 'hid'
-        'persistent': [True],
-        'scale': [0.5],
-        'hidden_size': [128],
-        'always_zero': [False],
-        'pred_loss': [False],
-        'image_stack': [False],
-        'save_dir': [''],
-        'pred_mode': ['pred_model'], #'pred_model' | 'pos_enc'
-        'no_bonus': [0],
-        'fixed_probability': [None],
-        'obs_interval': [1],
-        'predict_interval': [1],
-        'no_op': [False],
+        'use_gae': True,
+        'lr': [2.5e-4, 2.5e-4],
+        'clip_param': 0.1,
+        'value_loss_coef': 0.5,
+        'num_processes': 16,
+        # 'num_processes': 8,
+        'num_steps': 512,
+        'num_mini_batch': 4,
+        'log_interval': 1,
+        'use_linear_lr_decay': True,
+        'entropy_coef': 0.005,
+        'num_env_steps': 50000000,
+        'bonus1': 0,
+        'cuda': True,
+        # 'proj_name': 'async-maze',
+        'proj_name': 'async-vizdoom',
+        # 'proj_name': 'async-car',
+        # 'proj_name': 'debug',
+        'gif_save_interval': 200,
+        'note': '',
+        'debug': False,
+        'gate_input': 'hid', #'obs' | 'hid'
+        'persistent': True,
+        'scale': 0.25,
+        'hidden_size': 128,
+        'always_zero': False,
+        'pred_loss': False,
+        'image_stack': False,
+        'save_dir': '',
+        'pred_mode': 'pred_model', #'pred_model' | 'pos_enc'
+        'no_bonus': 0,
+        'fixed_probability': None,
+        'obs_interval': 6,
+        'predict_interval': 1,
+        'no_op': True,
         }
 
-    run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)
+    # run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)
+    main(**sweep_params)
 
     # python aws.py --mode ec2 --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python'
     # python aws.py --mode local_docker --python_cmd 'xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python'
