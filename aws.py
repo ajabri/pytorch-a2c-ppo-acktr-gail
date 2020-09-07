@@ -46,7 +46,7 @@ def main(**kwargs):
     torch.manual_seed(kwargs['seed'])
     if kwargs['cuda']:
         torch.cuda.manual_seed_all(kwargs['seed'])
-    device = torch.device("cuda:5" if kwargs['cuda'] else "cpu")
+    device = torch.device("cuda:4" if kwargs['cuda'] else "cpu")
     if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
@@ -357,7 +357,6 @@ if __name__ == "__main__":
         'clip_param': 0.1,
         'value_loss_coef': 0.5,
         'num_processes': 16,
-        # 'num_processes': 8,
         'num_steps': 512,
         'num_mini_batch': 4,
         'log_interval': 1,
@@ -371,20 +370,20 @@ if __name__ == "__main__":
         # 'proj_name': 'async-car',
         # 'proj_name': 'debug',
         'gif_save_interval': 200,
-        'note': '',
+        'note': 'update',
         'debug': False,
         'gate_input': 'hid', #'obs' | 'hid'
         'persistent': True,
         'scale': 0.25,
         'hidden_size': 128,
-        'always_zero': False,
+        'always_zero': True,
         'pred_loss': False,
         'image_stack': False,
         'save_dir': '',
         'pred_mode': 'pred_model', #'pred_model' | 'pos_enc'
         'no_bonus': 0,
         'fixed_probability': None,
-        'obs_interval': 6,
+        'obs_interval': 3,
         'predict_interval': 1,
         'no_op': True,
         }

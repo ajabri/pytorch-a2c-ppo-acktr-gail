@@ -121,15 +121,12 @@ class AsyncWrapper(gym.Wrapper):
 
     def step(self, action):
         predict, action = action[0], action[1:]
-        obs, reward, done, info = self.env.step(action)
         if not predict:
-            observations = [obs]
+            curr_action = self.no_op_action if self.no_op else action
+            # time taken to process the last observation. While processing the images, do some no_op 
             for _ in range(self.obs_interval - 1):
-                curr_action = self.no_op_action if self.no_op else action
-                obs, reward, done, info = self.env.step(curr_action)
-                observations.append(obs)
-            if self.which_obs == 'first':
-                obs = observations[0]
+                self.env.step(curr_action)
+        obs, reward, done, info = self.env.step(action)
         return obs, reward, done, info
 
 
