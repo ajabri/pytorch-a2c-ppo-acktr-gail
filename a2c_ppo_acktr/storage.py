@@ -151,7 +151,7 @@ class RolloutStorage(object):
             yield obs_batch, recurrent_hidden_states_batch, actions_batch, \
                 value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ
 
-    def recurrent_generator(self, advantages, num_mini_batch, full_hidden=False):
+    def recurrent_generator(self, advantages, num_mini_batch, full_hidden=False, batch_size=None):
         num_processes = self.rewards.size(1)
         assert num_processes >= num_mini_batch, (
             "PPO requires the number of processes ({}) "
@@ -230,5 +230,13 @@ class RolloutStorage(object):
                     old_action_log_probs_batch)
             adv_targ = _flatten_helper(T, N, adv_targ)
 
-            yield obs_batch, recurrent_hidden_states_batch, actions_batch, infos_batch, \
-                value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ, full_recurrent_hidden_states_batch
+            num_samples = obs_batch.shape[0]
+            if batch_size != None:
+                for i in range(num_samples//batch_size):
+                    start, end = i * batch_size, (i+1) * batch_size
+                    yield obs_batch[start:end], recurrent_hidden_states_batch[i], actions_batch[start:end], [infos_batch[0][start:end], infos_batch[1][start:end]], \
+                        value_preds_batch[start:end], return_batch[start:end], masks_batch[start:end], old_action_log_probs_batch[start:end], \
+                        adv_targ[start:end], full_recurrent_hidden_states_batch[start:end]
+            else:
+                yield obs_batch, recurrent_hidden_states_batch, actions_batch, infos_batch, \
+                    value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ, full_recurrent_hidden_states_batch

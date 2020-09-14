@@ -352,7 +352,7 @@ if __name__ == "__main__":
         # 'env_name': 'MiniGrid-MultiRoom-N4-S5-v0',
         # 'env_name': 'MiniWorld-FourRooms-v0',
 
-        'use_gae': True,
+        'use_gae': False,
         'lr': [2.5e-4, 2.5e-4],
         'clip_param': 0.1,
         'value_loss_coef': 0.5,
@@ -376,7 +376,7 @@ if __name__ == "__main__":
         'gate_input': 'hid', #'obs' | 'hid'
         'persistent': True,
         'scale': 0.25,
-        'hidden_size': 128,
+        'hidden_size': 32,
         'always_zero': False,
         'pred_loss': False,
         'image_stack': False,

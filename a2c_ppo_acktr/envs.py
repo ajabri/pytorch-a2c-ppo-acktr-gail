@@ -38,9 +38,13 @@ try:
 except ImportError:
     pass
 
+try:
+    import vizdoomgym
+except ImportError:
+    pass
+
 from gym.wrappers import FlattenObservation
 from a2c_ppo_acktr.wrappers import *
-import vizdoomgym
 
 def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False, resolution_scale = 1., async_params=[1, 1, False]):
     def _thunk():
@@ -85,7 +89,6 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
                     obs2 = obs.copy()
                     obs2 = obs2//4
                     return top_down_view2, top_down_view, obs2, obs
-
             class CollectHealthNew(CollectHealth):
                 def __init__(self, resolution_scale=1.):
                     obs_height, obs_width = 60, 80
@@ -167,6 +170,17 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
             env = gym.make(env_id)
             no_op_action = None
             env = ResizeObservation(env, prop=resolution_scale)
+
+        elif env_id in ['relocate-v0', 'pen-v0', 'hammer-v0', 'door-v0']:
+            try:
+                from mjrl.utils.gym_env import GymEnv
+                import mj_envs
+            except ImportError:
+                pass
+            env = GymEnv(env_id)
+            env.spec = EnvSpec(env_id)
+            env = HandWrapper(env)
+            no_op_action = 0
 
         else:
             env = gym.make(env_id)

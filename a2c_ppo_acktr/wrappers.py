@@ -103,14 +103,13 @@ class TimeStepCounter(gym.Wrapper):
 class AsyncWrapper(gym.Wrapper):
     def __init__(self, env, obs_interval, predict_interval, no_op=False, no_op_action=None):
         # missing variables below
-        env.reward_range = None
+        env.reward_range = (-float('inf'), float('inf'))
         env.metadata = None
         gym.Wrapper.__init__(self, env)
+        self.env = env
         self.obs_interval = obs_interval
         self.predict_interval = predict_interval
         assert self.predict_interval == 1 #remove and fix it in the future
-        self.last_action = np.zeros(self.action_space.shape)
-        self.displacement = np.zeros(self.action_space.shape)
         self.no_op_action = no_op_action
         self.no_op = no_op
         self.which_obs = 'first' #TODO: implement it.
@@ -121,19 +120,29 @@ class AsyncWrapper(gym.Wrapper):
 
     def step(self, action):
         predict, action = action[0], action[1:]
+        dones = []
+        goal_achieved = []
         if not predict:
             curr_action = self.no_op_action if self.no_op else action
-            # time taken to process the last observation. While processing the images, do some no_op 
+            # time taken to process the last observation. While processing the images, do some no_op
             for _ in range(self.obs_interval - 1):
-                self.env.step(curr_action)
+                _, _, done, info = self.env.step(curr_action)
+                if 'goal_achieved' in info.keys():
+                    goal_achieved.append(info['goal_achieved'])
+                dones.append(done)
         obs, reward, done, info = self.env.step(action)
+        dones.append(done)
+        if 'goal_achieved' in info.keys():
+            goal_achieved.append(info['goal_achieved'])
+        done = True in dones
+        info['goal_achieved'] = goal_achieved
         return obs, reward, done, info
 
 
 class RobotSuiteWrapper(gym.Wrapper):
     def __init__(self, env):
         # missing variables below
-        env.reward_range = None
+        env.reward_range = (-float('inf'), float('inf'))
         env.metadata = None
         env.action_space = spaces.Box(-np.inf, np.inf, shape=(env.dof,), dtype='float32')
         env.observation_space = spaces.Box(-np.inf, np.inf, shape=(env.camera_height, env.camera_width, 3), dtype='float32')
@@ -153,27 +162,23 @@ class RobotSuiteWrapper(gym.Wrapper):
         return obs['image'], reward, done, info
 
 
+class HandWrapper(gym.Wrapper):
+    def __init__(self, env):
+        # missing variables below
+        env.reward_range = (-float('inf'), float('inf'))
+        env.metadata = None
+        gym.Wrapper.__init__(self, env)
 
+    def reset(self):
+        return self.env.reset()
 
-# class MiniWorldWrapper(gym.core.ObservationWrapper):
-#     def __init__(self, env, resolution_scale=1):
-#         obs_height, obs_width = 60, 80
-#         real_obs_height, real_obs_width = int(resolution_scale*obs_height), int(resolution_scale*obs_width)
-#         super().__init__(env, obs_height=real_obs_height, obs_width=real_obs_width)
-#
-#     def observation(self, observation):
-#         return observation
-#
-#     def full_obs(self):
-#         top_down_view = env.render_top_view()
-#         top_down_view2 = top_down_view.copy()
-#         r, g, b = top_down_view[:, :, 0], top_down_view[:, :, 1], top_down_view[:, :, 2]
-#         indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
-#         ratio = 255
-#         top_down_view2[indices] = ratio * np.array([0, 0, 1])
-#         top_down_view[indices] = ratio * np.array([1, 0, 0])
-#
-#         obs = env.render_obs()
-#         obs2 = obs.copy()
-#         obs2[:, :, -1] += 125
-#         return top_down_view2, top_down_view, obs2, obs
+    def seed(self, seed=None):
+        self.np_random, seed = seeding.np_random(seed)
+        return [seed]
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        return obs, reward, done, info
+
+    def close(self):
+        pass
