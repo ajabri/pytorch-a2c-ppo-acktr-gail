@@ -32,6 +32,7 @@ class RolloutStorage(object):
 
         self.num_steps = num_steps
         self.step = 0
+        self.is_leaf = (info_size != 0)
 
     def to(self, device):
         self.obs = self.obs
@@ -63,6 +64,24 @@ class RolloutStorage(object):
             self.info[1][self.step].copy_(infos[1])
 
         self.step = (self.step + 1) % self.num_steps
+
+    def insert_single(self, obs, recurrent_hidden_states, actions, action_log_probs,
+               value_preds, rewards, masks, bad_masks, idx):
+        self.obs[self.step + 1][idx].copy_(obs)
+        self.recurrent_hidden_states[self.step + 1][idx].copy_(recurrent_hidden_states)
+        self.actions[self.step][idx].copy_(actions)
+        self.action_log_probs[self.step][idx].copy_(action_log_probs)
+        self.value_preds[self.step][idx].copy_(value_preds)
+        self.rewards[self.step][idx].copy_(rewards)
+        self.masks[self.step + 1][idx].copy_(masks)
+        self.bad_masks[self.step + 1][idx].copy_(bad_masks)
+
+        self.step = (self.step + 1) % self.num_steps
+
+    def set_bad_transitions(self, epi, device):
+        while self.step < self.num_steps and self.step > 0:
+            self.bad_masks[self.step+1][epi].copy_(torch.FloatTensor([1.0]).to(device).reshape((-1)))
+            self.step = (self.step + 1) % self.num_steps
 
     def after_update(self):
         self.obs[0].copy_(self.obs[-1])
@@ -151,6 +170,8 @@ class RolloutStorage(object):
             yield obs_batch, recurrent_hidden_states_batch, actions_batch, \
                 value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ
 
+
+
     def recurrent_generator(self, advantages, num_mini_batch, full_hidden=False, batch_size=None):
         num_processes = self.rewards.size(1)
         assert num_processes >= num_mini_batch, (
@@ -231,12 +252,10 @@ class RolloutStorage(object):
             adv_targ = _flatten_helper(T, N, adv_targ)
 
             num_samples = obs_batch.shape[0]
-            if batch_size != None:
-                for i in range(num_samples//batch_size):
-                    start, end = i * batch_size, (i+1) * batch_size
-                    yield obs_batch[start:end], recurrent_hidden_states_batch[i], actions_batch[start:end], [infos_batch[0][start:end], infos_batch[1][start:end]], \
-                        value_preds_batch[start:end], return_batch[start:end], masks_batch[start:end], old_action_log_probs_batch[start:end], \
-                        adv_targ[start:end], full_recurrent_hidden_states_batch[start:end]
-            else:
+
+            if self.is_leaf:
                 yield obs_batch, recurrent_hidden_states_batch, actions_batch, infos_batch, \
+                    value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ, full_recurrent_hidden_states_batch
+            else:
+                yield obs_batch, recurrent_hidden_states_batch, actions_batch, None, \
                     value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ, full_recurrent_hidden_states_batch

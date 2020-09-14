@@ -3,9 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from pdb import set_trace as st
-import numpy as np
-import mjrl.utils.process_samples as process_samples
-
 
 
 class PPO():
@@ -44,14 +41,13 @@ class PPO():
         action_loss_epoch = 0
         dist_entropy_epoch = 0
         pred_err_epoch = 0
-        batch_size = None
         for e in range(self.ppo_epoch):
             if self.actor_critic.is_recurrent:
                 data_generator = rollouts.recurrent_generator(
-                    advantages, self.num_mini_batch, full_hidden=require_memory, batch_size=batch_size)
+                    advantages, self.num_mini_batch, full_hidden=require_memory)
             else:
                 data_generator = rollouts.feed_forward_generator(
-                    advantages, self.num_mini_batch, batch_size=batch_size)
+                    advantages, self.num_mini_batch)
 
             for sample in data_generator:
                 obs_batch, recurrent_hidden_states_batch, actions_batch, infos_batch, \
@@ -86,42 +82,42 @@ class PPO():
                     value_losses_clipped = (value_pred_clipped - return_batch).pow(2)
                     value_loss = 0.5 * torch.max(value_losses,
                                                  value_losses_clipped).mean()
-                # else:
-                #     value_loss = 0.5 * (return_batch - values).pow(2).mean()
+                else:
+                    value_loss = 0.5 * (return_batch - values).pow(2).mean()
 
                 total_loss = value_loss * self.value_loss_coef + action_loss - \
                  dist_entropy * self.entropy_coef
 
-                # if pred_loss: #only for pi_2
-                #     assert len(infos_batch.shape) == 2
-                #     gate = infos_batch[:, 0].unsqueeze(dim=-1)
-                #     # gate, _ = torch.split(infos_batch, 1, dim=-1)
-                #     gate = gate.squeeze().bool()
-                #
-                #     with torch.no_grad():
-                #         # currenlt only works for non-perminant memory
-                #         if obs_batch.ndim > 3 and self.actor_critic.base.gate_input != 'hid':
-                #             obs_batch = obs_batch/255
-                #             obs_batch = self.actor_critic.base.cnn(obs_batch)
-                #         if self.actor_critic.base.persistent:
-                #             # torch.Size([1026, 128]) torch.Size([128])
-                #             # TODO: fix it
-                #             full_hxs = self.actor_critic.process_rnn_hxs(full_recurrent_hidden_states_batch, masks_batch, N=num_processes//self.num_mini_batch, device=device)
-                #             h1, h2 = torch.chunk(full_hxs, 2, dim = -1)
-                #             capts = self.actor_critic.base.cell.capture(torch.cat((obs_batch[gate], h2[gate]), dim = -1))
-                #             capts, _ = torch.chunk(capts, 2, dim = -1)
-                #         else:
-                #             capts = self.actor_critic.base.cell.capture(obs_batch[gate])
-                #
-                #     # capts = capts[]
-                #     all_hxs = all_hxs[gate]
-                #     # import pdb; pdb.set_trace()
-                #
-                #     pred_err = torch.nn.functional.mse_loss(all_hxs, capts)
-                #     # import pdb; pdb.set_trace()
-                #     total_loss += pred_err
-                #
-                #     pred_err_epoch += pred_err.item()
+                if pred_loss: #only for pi_2
+                    assert len(infos_batch.shape) == 2
+                    gate = infos_batch[:, 0].unsqueeze(dim=-1)
+                    # gate, _ = torch.split(infos_batch, 1, dim=-1)
+                    gate = gate.squeeze().bool()
+
+                    with torch.no_grad():
+                        # currenlt only works for non-perminant memory
+                        if obs_batch.ndim > 3 and self.actor_critic.base.gate_input != 'hid':
+                            obs_batch = obs_batch/255
+                            obs_batch = self.actor_critic.base.cnn(obs_batch)
+                        if self.actor_critic.base.persistent:
+                            # torch.Size([1026, 128]) torch.Size([128])
+                            # TODO: fix it
+                            full_hxs = self.actor_critic.process_rnn_hxs(full_recurrent_hidden_states_batch, masks_batch, N=num_processes//self.num_mini_batch, device=device)
+                            h1, h2 = torch.chunk(full_hxs, 2, dim = -1)
+                            capts = self.actor_critic.base.cell.capture(torch.cat((obs_batch[gate], h2[gate]), dim = -1))
+                            capts, _ = torch.chunk(capts, 2, dim = -1)
+                        else:
+                            capts = self.actor_critic.base.cell.capture(obs_batch[gate])
+
+                    # capts = capts[]
+                    all_hxs = all_hxs[gate]
+                    # import pdb; pdb.set_trace()
+
+                    pred_err = torch.nn.functional.mse_loss(all_hxs, capts)
+                    # import pdb; pdb.set_trace()
+                    total_loss += pred_err
+
+                    pred_err_epoch += pred_err.item()
 
                 self.optimizer.zero_grad()
                 total_loss.backward()
@@ -141,69 +137,3 @@ class PPO():
         pred_err_epoch /= num_updates
 
         return value_loss_epoch, action_loss_epoch, dist_entropy_epoch, pred_err_epoch
-
-
-    def train_from_paths(self, paths, gamma, pred_loss=False, require_memory=False, num_processes=16, device='cpu'):
-        process_samples.compute_returns(paths, gamma)
-        process_samples.compute_advantages(paths, self.baseline, gamma, 0.97)
-        observations = np.concatenate([path["observations"] for path in paths])
-        actions = np.concatenate([path["actions"] for path in paths])
-        old_action_log_probs = np.concatenate([path["action_log_probs"] for path in paths])
-        dones = np.concatenate([path["dones"] for path in paths]).reshape((-1, 1))
-        path_returns = np.concatenate([path["returns"] for path in paths])
-        advantages = np.concatenate([path["advantages"] for path in paths])
-        advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-6)
-
-        mean_return = np.mean([sum(p["rewards"]) for p in paths])
-        self.running_score = mean_return if self.running_score is None else \
-                             0.9*self.running_score + 0.1*mean_return  # approx avg of last 10 ite
-
-        value_loss_epoch = 0
-        action_loss_epoch = 0
-        dist_entropy_epoch = 0
-        pred_err_epoch = 0
-        batch_size = None
-        num_samples = observations.shape[0]
-        print("start to train agent")
-        mb_size = 1024
-        for e in range(self.ppo_epoch):
-            for mb in range(int(num_samples / mb_size)):
-                rand_idx = np.random.choice(num_samples, size=mb_size)
-
-                obs_batch = torch.from_numpy(observations[rand_idx]).to(device).float()
-                actions_batch = torch.from_numpy(actions[rand_idx]).to(device).float()
-                return_batch = torch.from_numpy(path_returns[rand_idx]).to(device).float()
-                adv_targ = torch.from_numpy(advantages[rand_idx]).to(device).float()
-                masks_batch = torch.from_numpy(dones[rand_idx]).to(device).float()
-
-                old_action_log_probs_batch = torch.from_numpy(old_action_log_probs[rand_idx]).to(device).float()
-
-                _, action_log_probs, dist_entropy, rnn_hxs = self.actor_critic.evaluate_actions(
-                    obs_batch, None, masks_batch, actions_batch)
-
-                ratio = torch.exp(action_log_probs - old_action_log_probs_batch)
-                surr1 = ratio * adv_targ
-                surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv_targ
-                action_loss = -torch.min(surr1, surr2).mean()
-
-                total_loss = -action_loss.mean()
-
-                self.optimizer.zero_grad()
-                total_loss.backward()
-                nn.utils.clip_grad_norm_(self.actor_critic.parameters(),
-                                         self.max_grad_norm)
-                self.optimizer.step()
-
-        num_updates = self.ppo_epoch * int(num_samples / mb_size)
-
-        error_before, error_after = self.baseline.fit(paths, return_errors=True)
-        print('VF_error_before', error_before)
-        print('VF_error_after', error_after)
-        print(self.running_score)
-
-        value_loss_epoch /= num_updates
-        action_loss_epoch /= num_updates
-        dist_entropy_epoch /= num_updates
-        pred_err_epoch /= num_updates
-
-        return value_loss_epoch, error_before, error_after, self.running_score

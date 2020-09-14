@@ -504,3 +504,49 @@ def compute_returns(path,
     # advantage = path['returns'][:-1] - path['values'][:-1]
     # path['advantages'] = np.array(advantage)
     # return path
+
+def evaluate_policy(env,
+                    policy,
+                    num_episodes=5,
+                    horizon=None,
+                    gamma=1,
+                    visual=False,
+                    percentile=[],
+                    get_full_dist=False,
+                    mean_action=False,
+                    init_env_state=None,
+                    terminate_at_done=True,
+                    seed=123,
+                    device='cpu'):
+
+    env.set_seed(seed)
+    horizon = env._horizon if horizon is None else horizon
+    mean_eval, std, min_eval, max_eval = 0.0, 0.0, -1e8, -1e8
+    ep_returns = np.zeros(num_episodes)
+
+    for ep in range(num_episodes):
+        env.reset()
+        if init_env_state is not None:
+            env.set_env_state(init_env_state)
+        t, done = 0, False
+        while t < horizon and (done == False or terminate_at_done == False):
+            env.render() if visual is True else None
+            o = env.get_obs().reshape((1, -1))
+            act = policy(torch.from_numpy(o).float().to(device)).detach().numpy().reshape((-1))
+            mask = np.zeros((1))
+            real_act = np.concatenate((mask, act))
+            o, r, done, _ = env.step(real_act)
+            ep_returns[ep] += (gamma ** t) * r
+            t += 1
+
+    mean_eval, std = np.mean(ep_returns), np.std(ep_returns)
+    min_eval, max_eval = np.amin(ep_returns), np.amax(ep_returns)
+    base_stats = [mean_eval, std, min_eval, max_eval]
+
+    percentile_stats = []
+    for p in percentile:
+        percentile_stats.append(np.percentile(ep_returns, p))
+
+    full_dist = ep_returns if get_full_dist is True else None
+
+    return [base_stats, percentile_stats, full_dist][0][0]
