@@ -38,6 +38,8 @@ try:
 except ImportError:
     pass
 
+
+
 try:
     import vizdoomgym
 except ImportError:
@@ -46,7 +48,9 @@ except ImportError:
 from gym.wrappers import FlattenObservation
 from a2c_ppo_acktr.wrappers import *
 
-def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False, resolution_scale = 1., async_params=[1, 1, False]):
+def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
+             resolution_scale = 1., async_params=[1, 1, False],
+             async_type=0, gamma=None):
     def _thunk():
         if env_id.startswith("dm"):
             _, domain, task = env_id.split('.')
@@ -58,95 +62,7 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
             else:
                 # env = RGBImgPartialObsWrapper(env, tile_size = 1)
                 env = ImgObsWrapper(env)
-        elif env_id.startswith("MiniWorld"):
-            no_op_action = 7
-            import pyglet
-            try:
-                import gym_miniworld
-                from gym_miniworld.miniworld import MiniWorldEnv, Room
-                from gym_miniworld.envs.ymaze import YMaze
-                from gym_miniworld.envs.collecthealth import CollectHealth
-                from gym_miniworld.envs.fourrooms import FourRooms
-            except pyglet.canvas.xlib.NoSuchDisplayException:
-                pass
 
-            class YMazeNew(YMaze):
-                def __init__(self, resolution_scale=1.):
-                    obs_height, obs_width = 60, 80
-                    real_obs_height, real_obs_width = int(resolution_scale*obs_height), int(resolution_scale*obs_width)
-                    super().__init__(obs_height=real_obs_height, obs_width=real_obs_width)
-
-                def full_obs(self):
-                    """
-                    actually just a change of view, change it in the future"""
-                    top_down_view = self.render_top_view()
-                    top_down_view2 = top_down_view.copy()
-                    r, g, b = top_down_view[:, :, 0], top_down_view[:, :, 1], top_down_view[:, :, 2]
-                    indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
-                    top_down_view2[indices] = np.array([0, 0, 255])
-                    top_down_view[indices] = np.array([255, 0, 0])
-                    obs = self.render_obs()
-                    obs2 = obs.copy()
-                    obs2 = obs2//4
-                    return top_down_view2, top_down_view, obs2, obs
-            class CollectHealthNew(CollectHealth):
-                def __init__(self, resolution_scale=1.):
-                    obs_height, obs_width = 60, 80
-                    real_obs_height, real_obs_width = int(resolution_scale*obs_height), int(resolution_scale*obs_width)
-                    super().__init__(obs_height=real_obs_height, obs_width=real_obs_width)
-
-                def full_obs(self):
-                    """
-                    actually just a change of view, change it in the future"""
-                    top_down_view = self.render_top_view()
-                    top_down_view2 = top_down_view.copy()
-                    r, g, b = top_down_view[:, :, 0], top_down_view[:, :, 1], top_down_view[:, :, 2]
-                    indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
-                    top_down_view2[indices] = np.array([0, 0, 255])
-                    top_down_view[indices] = np.array([255, 0, 0])
-                    obs = self.render_obs()
-                    obs2 = obs.copy()
-                    obs2 = obs2//4
-                    return top_down_view2, top_down_view, obs2, obs
-
-            class FourRoomsNew(FourRooms):
-                def __init__(self, resolution_scale=1.):
-                    obs_height, obs_width = 60, 80
-                    real_obs_height, real_obs_width = int(resolution_scale*obs_height), int(resolution_scale*obs_width)
-                    super().__init__(obs_height=real_obs_height, obs_width=real_obs_width)
-
-                def full_obs(self):
-                    top_down_view = self.render_top_view()
-                    top_down_view2 = top_down_view.copy()
-                    r, g, b = top_down_view[:, :, 0], top_down_view[:, :, 1], top_down_view[:, :, 2]
-                    indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
-                    # ratio = r[indices].reshape((-1, 1))
-                    # ratio = 255
-                    top_down_view2[indices] = np.array([0, 0, 255])
-                    # top_down_view2[indices] = np.array([91, 127, 228])
-                    # top_down_view[indices] = np.array([255, 0, 0])
-                    top_down_view[indices] = np.array([255, 0, 0])
-                    # top_down_view2[indices] = np.array([49, 154, 87])
-                    # # ratio * np.array([0, 0, 1])
-                    # top_down_view[indices] = np.array([226, 34, 92])
-                    # ratio * np.array([1, 0, 0])
-                    obs = self.render_obs()
-                    obs2 = obs.copy()
-                    # r, g, b = obs2[:, :, 0], obs2[:, :, 1], obs2[:, :, 2]
-                    # indices = np.logical_and(r<200, np.logical_and(g<200, b<200))
-                    # obs2[indices] = obs2[indices] + np.array([0, 0, 100])
-                    # [:, :, -1] += 125
-                    obs2 = obs2//4
-                    return top_down_view2, top_down_view, obs2, obs
-
-            if env_id.startswith("MiniWorld-FourRooms"):
-                env = FourRoomsNew(resolution_scale=resolution_scale)
-            elif env_id.startswith("MiniWorld-YMaze"):
-                env = YMazeNew(resolution_scale=resolution_scale)
-            elif env_id.startswith("MiniWorld-CollectHealth"):
-                env = CollectHealthNew(resolution_scale=resolution_scale)
-            else:
-                raise NotImplementedError("resolution needs to be changed.")
         elif env_id.startswith("Sawyer"):
             env = suite.make(
                     env_id,
@@ -181,15 +97,18 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
             env.spec = EnvSpec(env_id)
             env = HandWrapper(env)
             no_op_action = 0
-
         else:
             env = gym.make(env_id)
             no_op_action = 0
             env = ResizeObservation(env, prop=resolution_scale)
 
         obs_interval, predict_interval, no_op = async_params
-        env = AsyncWrapper(env, obs_interval=obs_interval, predict_interval=predict_interval, no_op=no_op, no_op_action = no_op_action)
-
+        if async_type == 0:
+            env = AsyncWrapper(env, obs_interval=obs_interval, predict_interval=predict_interval,
+                               no_op=no_op, no_op_action = no_op_action)
+        elif async_type == 1:
+            env = NormAsyncWrapper(env, obs_interval=obs_interval, predict_interval=predict_interval,
+                                   no_op=no_op, no_op_action = no_op_action, gamma=gamma)
 
         is_atari = hasattr(gym.envs, 'atari') and isinstance(
             env.unwrapped, gym.envs.atari.atari_env.AtariEnv)
@@ -240,9 +159,13 @@ def make_vec_envs(env_name,
                   get_pixel=False,
                   resolution_scale=1.,
                   image_stack=False,
-                  async_params=[1, 1, False]):
+                  async_params=[1, 1, False],
+                  async_type=0,
+                  normalize=True):
     envs = [
-        make_env(env_name, seed, i, log_dir, allow_early_resets, get_pixel=get_pixel, resolution_scale=resolution_scale, async_params=async_params)
+        make_env(env_name, seed, i, log_dir, allow_early_resets, get_pixel=get_pixel,
+                 resolution_scale=resolution_scale, async_params=async_params,
+                 async_type=async_type, gamma=gamma)
         for i in range(num_processes)
     ]
 
@@ -251,11 +174,12 @@ def make_vec_envs(env_name,
     else:
         envs = DummyVecEnv(envs)
 
-    if len(envs.observation_space.shape) == 1:
-        if gamma is None:
-            envs = VecNormalize(envs, ret=False)
-        else:
-            envs = VecNormalize(envs, gamma=gamma)
+    if normalize:
+        if len(envs.observation_space.shape) == 1:
+            if gamma is None:
+                envs = VecNormalize(envs, ret=False)
+            else:
+                envs = VecNormalize(envs, gamma=gamma)
 
     envs = VecPyTorch(envs, device)
 

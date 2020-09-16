@@ -96,7 +96,7 @@ def main(**kwargs):
             lr = kwargs['lr'][0]
 
         entropy_coef = kwargs['entropy_coef']
-
+ 
         if kwargs['algo'] == 'ppo':
             agent = algo.PPO(
                 actor_critic,

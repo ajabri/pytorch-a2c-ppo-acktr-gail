@@ -120,23 +120,79 @@ class AsyncWrapper(gym.Wrapper):
 
     def step(self, action):
         predict, action = action[0], action[1:]
-        dones = []
-        goal_achieved = []
+        infos, rewards, actions = {}, 0, []
         if not predict:
-            curr_action = self.no_op_action if self.no_op else action
-            # time taken to process the last observation. While processing the images, do some no_op
+            no_op = self.no_op_action if self.no_op else action
             for _ in range(self.obs_interval - 1):
-                _, _, done, info = self.env.step(curr_action)
-                if 'goal_achieved' in info.keys():
-                    goal_achieved.append(info['goal_achieved'])
-                dones.append(done)
-        obs, reward, done, info = self.env.step(action)
-        dones.append(done)
-        if 'goal_achieved' in info.keys():
-            goal_achieved.append(info['goal_achieved'])
-        done = True in dones
-        info['goal_achieved'] = goal_achieved
-        return obs, reward, done, info
+                actions.append(no_op)
+        actions.append(action)
+        for action in actions:
+            obs, reward, done, info = self.env.step(action)
+            rewards += reward
+            for k in info.keys():
+                if k in infos:
+                    infos[k].append(info[k])
+                else:
+                    infos[k] = []
+            if done:
+                break
+        return obs, rewards, done, infos
+
+
+class NormAsyncWrapper(gym.Wrapper):
+    def __init__(self, env, obs_interval, predict_interval, no_op=False, no_op_action=None, gamma=None):
+        # missing variables below
+        env.reward_range = (-float('inf'), float('inf'))
+        env.metadata = None
+        gym.Wrapper.__init__(self, env)
+        self.env = env
+        self.obs_interval = obs_interval
+        self.predict_interval = predict_interval
+        assert self.predict_interval == 1 #remove and fix it in the future
+        self.no_op_action = no_op_action
+        self.no_op = no_op
+        self.which_obs = 'first' #TODO: implement it.
+        from baselines.common.running_mean_std import RunningMeanStd
+        self.ob_rms = RunningMeanStd(shape=self.observation_space.shape)
+        self.ret_rms = RunningMeanStd(shape=())
+        self.clipob = 10
+        self.cliprew = 10
+        self.ret = 0
+        self.gamma = gamma
+        self.epsilon = 1e-8
+
+    def reset(self):
+        obs = self.env.reset()
+        return obs
+
+    def step(self, action):
+        predict, action = action[0], action[1:]
+        infos, rewards, actions = {}, 0, []
+        if not predict:
+            no_op = self.no_op_action if self.no_op else action
+            for _ in range(self.obs_interval - 1):
+                actions.append(no_op)
+        actions.append(action)
+        for action in actions:
+            obs, reward, done, info = self.env.step(action)
+            self.ret = self.ret * self.gamma + reward
+            self.ret_rms.update(np.array([self.ret]))
+            self.ob_rms.update(np.expand_dims(obs, axis=0))
+            reward = np.clip(reward / np.sqrt(self.ret_rms.var + self.epsilon), -self.cliprew, self.cliprew)
+            rewards += reward
+            for k in info.keys():
+                if k in infos:
+                    infos[k].append(info[k])
+                else:
+                    infos[k] = []
+            if done:
+                self.ret = 0.
+                break
+        return obs, rewards, done, infos
+
+    def _obfilt(self, obs):
+        obs = np.clip((obs - self.ob_rms.mean) / np.sqrt(self.ob_rms.var + self.epsilon), -self.clipob, self.clipob)
+        return obs
 
 
 class RobotSuiteWrapper(gym.Wrapper):
