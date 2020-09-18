@@ -109,7 +109,7 @@ def main(**kwargs):
 
     def dagger(env, test_env, ppo_env, student, expert, obs_dim, act_dim):
         # dagger_policy = DaggerPolicy(env, student, expert, actor_critic, obs_dim, act_dim, capacity=kwargs['rollout_num']*e._horizon)
-        dagger_policy = DaggerPolicy(env, student, expert, actor_critic, obs_dim, act_dim, capacity=50000)
+        dagger_policy = DaggerPolicy(env, student, expert, actor_critic, obs_dim, act_dim, capacity=kwargs['rollout_num']*e._horizon)
 
         for i in range(2000):
             epochs = 4
@@ -138,15 +138,15 @@ if __name__ == "__main__":
         'env_name': 'pen-v0',
 
         'cuda': False,
-        # 'proj_name': 'dagger5',
+        # 'proj_name': 'dagger',
         'proj_name': 'debug',
-        'note': 'random pi1, 4/5',
+        'note': '',
         'debug': False,
         'hidden_size': 32,
         'gate_input': 'hid', #'obs' | 'hid'
         'persistent': False,
         'pred_loss': False,
-        'obs_interval': 10,
+        'obs_interval': 3,
         'predict_interval': 1,
         'no_op': False,
         'extend_horizon': False,

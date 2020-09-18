@@ -3,20 +3,21 @@ from a2c_ppo_acktr.wrappers import *
 import mj_envs
 
 e = GymEnv('pen-v0')
-obs_interval, predict_interval, no_op = 3, 1, False
+obs_interval, predict_interval, no_op = 1, 1, False
 test_e = AsyncWrapper(e, obs_interval=obs_interval, predict_interval=predict_interval, no_op=no_op, no_op_action = None)
 
 obs = test_e.reset()
 done = False
 step = 0
 # while step < env._horizon and done == False:
-while not done:
+# while not done:
+for _ in range(200):
     step += 1
     action = e.action_space.sample()
     mask = np.zeros((1))
     real_act = np.concatenate((mask, action))
     obs, r, done, info = test_e.step(real_act)
-    print(r, done, step)
+    print(step, r, done, info)
 
 
 # import gym

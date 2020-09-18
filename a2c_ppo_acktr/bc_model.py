@@ -4,20 +4,23 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from evaluation import *
+from a2c_ppo_acktr.utils import init
 
+init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
+                        constant_(x, 0), np.sqrt(2))
 
 class Model(torch.nn.Module):
     def __init__(self, obs_dim, act_dim, hidden_size):
         super(Model, self).__init__()
 
         self.capture = nn.Sequential(
-            nn.Linear(obs_dim, hidden_size), nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size), nn.ReLU(),
+            init_(nn.Linear(obs_dim, hidden_size)), nn.ReLU(),
+            init_(nn.Linear(hidden_size, hidden_size)), nn.ReLU(),
             )
 
         self.predict = nn.Sequential(
-            nn.Linear(hidden_size+act_dim, hidden_size), nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size), nn.ReLU(),
+            init_(nn.Linear(hidden_size+act_dim, hidden_size)), nn.ReLU(),
+            init_(nn.Linear(hidden_size, hidden_size)), nn.ReLU(),
             )
         self.hidden_size = hidden_size
         self.out = nn.Linear(hidden_size, act_dim)
@@ -68,61 +71,6 @@ class Ops:
         return value_loss, action_loss, dist_entropy
 
 
-    # def evaluate(self, env, log_info, env_name, rollout_num, ops=True, seed=1, async_params=[False, 1, 1]):
-
-        # envs = make_vec_envs(env_name, seed, rollout_num, self.gamma, '.', self.device, False,
-        #                      async_params=async_params, normalize=False, async_type=1)
-        #
-        # obs = envs.reset()
-        # recurrent_hidden_state = torch.zeros((rollout_num, self.policy2.model.hidden_size), device=self.device)
-        # mask = torch.zeros((rollout_num, 1), device=self.device)
-        # done = False
-        # step = 0
-        # totalr = [0 for _ in range(rollout_num)]
-        # paths = [{'env_infos': {'goal_achieved': []}} for _ in range(rollout_num)]
-        # ever_dones = [False for _ in range(rollout_num)]
-        # while step < env._horizon:
-        #     step += 1
-        #     with torch.no_grad():
-        #         action, recurrent_hidden_state = self.policy2.model(obs)
-        #         if ops:
-        #             # value, decision, action_log_prob, _ = self.policy1.act(obs, recurrent_hidden_state, mask)
-        #             decision = torch.randint(0, 2, (rollout_num, 1))
-        #         else:
-        #             decision = torch.zeros((rollout_num, 1))
-        #
-        #     real_act = torch.cat((decision.float(), action), dim=-1)
-        #     obs, reward, done, infos = envs.step(real_act)
-        #     st()
-        #     for idx, path in enumerate(paths):
-        #         if not ever_dones[idx]:
-        #             path['env_infos']['goal_achieved'].extend(infos[idx]['goal_achieved'])
-        #             totalr[idx] += reward[idx].numpy().mean()
-        #             if done[idx]:
-        #                 ever_dones[idx] = True
-        #     if ops:
-        #         masks = torch.FloatTensor(
-        #             [[0.0] if done_ else [1.0] for done_ in done]).to(self.device)
-        #         bad_masks = torch.FloatTensor(
-        #             [[0.0] if 'bad_transition' in info.keys() else [1.0]
-        #              for info in infos]).to(self.device)
-        #
-        #         # self.rollouts.insert(obs, recurrent_hidden_state, decision, action_log_prob, value, reward, masks, bad_masks, infos=None)
-        #     # print([len(path['env_infos']['goal_achieved']) for path in paths])
-        # # if ops:
-        # #     value_loss1, action_loss1, dist_entropy1 = self.train_policy1(rollout_num)
-        # #     log_info['value_loss1'] = value_loss1
-        # #     log_info['action_loss1'] = action_loss1
-        # #     log_info['dist_entropy1'] = dist_entropy1
-        # #     log_info['mean_gt'] = self.rollouts.actions.float().mean().item()
-        # envs.close()
-        # print([len(paths[i]['env_infos']['goal_achieved']) for i in range(40)])
-        # success_rate = evaluate_success(env_name, paths)
-        # log_info['student_mean_return'] = np.mean(totalr)
-        # log_info['student_std_return'] = np.std(totalr)
-        # log_info['student_success_rate'] = success_rate
-
-
     def evaluate(self, env, log_info, env_name, rollout_num, ops=True, async_params=None, seed=1):
         returns = []
         all_env_infos = []
@@ -130,13 +78,16 @@ class Ops:
 
         for epi in range(rollout_num):
             obs = env.reset()
+            self.rollouts.obs[0][epi].copy_(torch.from_numpy(obs).float())
             recurrent_hidden_state = torch.zeros((1, self.policy2.model.hidden_size), device=self.device)
             mask = torch.zeros((1, 1), device=self.device)
             done = False
             step = 0
             totalr = 0
             path = {'env_infos': {'goal_achieved': []}}
-            while step < env._horizon and done == False:
+            record_success = True
+            # while step < env._horizon and done == False:
+            while step < env._horizon:
                 with torch.no_grad():
                     action, feature = self.policy2.model(torch.from_numpy(obs).float().reshape((1, -1)))
                     action = action.numpy()
@@ -153,9 +104,10 @@ class Ops:
 
                 real_act = np.concatenate((decision.numpy().reshape((-1)), action.reshape((-1))))
                 obs, r, done, info = env.step(real_act)
-                totalr += r
                 step += 1
-                path['env_infos']['goal_achieved'].extend(info['goal_achieved'])
+                if record_success:
+                    totalr += r
+                    path['env_infos']['goal_achieved'].extend(info['goal_achieved'])
                 if ops:
                     mask = torch.FloatTensor([0.0]).to(self.device) if done else torch.FloatTensor([1.0]).to(self.device)
                     self.rollouts.insert_single(torch.from_numpy(env._obfilt(obs)).float(), feature.reshape((-1)), decision.reshape((-1)),
@@ -164,6 +116,10 @@ class Ops:
 
                 recurrent_hidden_state = feature.reshape((1, -1))
                 mask = mask.reshape((1, -1))
+                if done:
+                    obs = env.reset()
+                    mask = torch.zeros((1, 1), device=self.device)
+                    record_success = False
             returns.append(totalr)
             all_env_infos.append(path)
 
@@ -245,13 +201,15 @@ class DaggerPolicy:
         self.act_data[self.next_idx] = np.float32(expert_action)
         with torch.no_grad():
             if ops:
-                # _, decision, _, _ = self.policy1.act(torch.from_numpy(obs).float().reshape((1, -1)), memory, done)
-                decision = torch.randint(0, 2, (1, 1)).to(device)
+                _, decision, _, _ = self.policy1.act(torch.from_numpy(obs).float().reshape((1, -1)), memory, done)
+                # decision = torch.randint(0, 2, (1, 1)).to(device)
             else:
                 decision = torch.zeros((1, 1)).to(device)
-            _, memory = self.student(obs.reshape((1, -1)), decision=decision, memory=torch.cat((last_a, memory), dim=-1))
+
+            student_action, memory = self.student(obs.reshape((1, -1)), decision=decision, memory=torch.cat((last_a, memory), dim=-1))
             memory = memory.data.numpy()
-        info = np.concatenate((decision.reshape((1, -1)), expert_action.reshape((1, -1)), memory.reshape((1, -1))), axis = -1)
+
+        info = np.concatenate((decision.reshape((1, -1)), student_action.reshape((1, -1)), memory.reshape((1, -1))), axis = -1)
         self.info[(self.next_idx+1) % self.CAPACITY] = info
         self.next_idx = (self.next_idx+1) % self.CAPACITY
         self.size = min(self.size+1, self.CAPACITY)
@@ -291,74 +249,74 @@ def get_data(env, policy_fn, num_rollouts, env_name, render=False, device='cpu',
 
     return None, log_info
 
-
-
-def evaluate_policy(env,
-                    policy,
-                    num_episodes=5,
-                    horizon=None,
-                    gamma=1,
-                    visual=False,
-                    percentile=[],
-                    get_full_dist=False,
-                    mean_action=False,
-                    init_env_state=None,
-                    terminate_at_done=True,
-                    seed=123,
-                    device='cpu'):
-
-    env.set_seed(seed)
-    horizon = env._horizon if horizon is None else horizon
-    mean_eval, std, min_eval, max_eval = 0.0, 0.0, -1e8, -1e8
-    ep_returns = np.zeros(num_episodes)
-
-    for ep in range(num_episodes):
-        env.reset()
-        if init_env_state is not None:
-            env.set_env_state(init_env_state)
-        t, done = 0, False
-        while t < horizon and (done == False or terminate_at_done == False):
-            env.render() if visual is True else None
-            o = env.get_obs().reshape((1, -1))
-            act = policy(torch.from_numpy(o).float().to(device))[0].detach().numpy().reshape((-1))
-            mask = np.zeros((1))
-            real_act = np.concatenate((mask, act))
-            o, r, done, _ = env.step(real_act)
-            ep_returns[ep] += (gamma ** t) * r
-            t += 1
-
-    mean_eval, std = np.mean(ep_returns), np.std(ep_returns)
-    min_eval, max_eval = np.amin(ep_returns), np.amax(ep_returns)
-    base_stats = [mean_eval, std, min_eval, max_eval]
-
-    percentile_stats = []
-    for p in percentile:
-        percentile_stats.append(np.percentile(ep_returns, p))
-
-    full_dist = ep_returns if get_full_dist is True else None
-
-    return [base_stats, percentile_stats, full_dist][0][0]
-
-
-def behavior_cloning(student, demo_paths, test_e, expert_e, device='cpu'):
-    bc_optimizer = optim.Adam(student.model.parameters(), lr=1e-3)
-    observations = np.concatenate([demo_path['observations'] for demo_path in demo_paths], axis = 0)
-    actions = np.concatenate([demo_path['actions'] for demo_path in demo_paths], axis = 0)
-    num_samples = observations.shape[0]
-    mb_size = 64
-    for _ in range(5):
-        for _ in range(num_samples//mb_size):
-            rand_idx = np.random.choice(num_samples, size=mb_size)
-            bc_optimizer.zero_grad()
-            obs = torch.from_numpy(observations[rand_idx]).to(device)
-            gt_act = torch.from_numpy(actions[rand_idx]).to(device)
-            act = student.model(obs.float())
-            loss = ((act[0] - gt_act.detach())**2).mean()
-            loss.backward()
-            bc_optimizer.step()
-        print(loss.item())
-    score = evaluate_policy(test_e, student.model, num_episodes=25, mean_action=True, device=device)
-    print("Score with behavior cloning in Asynchronous case =", score)
-
-    score = evaluate_policy(expert_e, student.model, num_episodes=25, mean_action=True, device=device)
-    print("Score with behavior cloning =", score)
+#
+#
+# def evaluate_policy(env,
+#                     policy,
+#                     num_episodes=5,
+#                     horizon=None,
+#                     gamma=1,
+#                     visual=False,
+#                     percentile=[],
+#                     get_full_dist=False,
+#                     mean_action=False,
+#                     init_env_state=None,
+#                     terminate_at_done=True,
+#                     seed=123,
+#                     device='cpu'):
+#
+#     env.set_seed(seed)
+#     horizon = env._horizon if horizon is None else horizon
+#     mean_eval, std, min_eval, max_eval = 0.0, 0.0, -1e8, -1e8
+#     ep_returns = np.zeros(num_episodes)
+#
+#     for ep in range(num_episodes):
+#         env.reset()
+#         if init_env_state is not None:
+#             env.set_env_state(init_env_state)
+#         t, done = 0, False
+#         while t < horizon and (done == False or terminate_at_done == False):
+#             env.render() if visual is True else None
+#             o = env.get_obs().reshape((1, -1))
+#             act = policy(torch.from_numpy(o).float().to(device))[0].detach().numpy().reshape((-1))
+#             mask = np.zeros((1))
+#             real_act = np.concatenate((mask, act))
+#             o, r, done, _ = env.step(real_act)
+#             ep_returns[ep] += (gamma ** t) * r
+#             t += 1
+#
+#     mean_eval, std = np.mean(ep_returns), np.std(ep_returns)
+#     min_eval, max_eval = np.amin(ep_returns), np.amax(ep_returns)
+#     base_stats = [mean_eval, std, min_eval, max_eval]
+#
+#     percentile_stats = []
+#     for p in percentile:
+#         percentile_stats.append(np.percentile(ep_returns, p))
+#
+#     full_dist = ep_returns if get_full_dist is True else None
+#
+#     return [base_stats, percentile_stats, full_dist][0][0]
+#
+#
+# def behavior_cloning(student, demo_paths, test_e, expert_e, device='cpu'):
+#     bc_optimizer = optim.Adam(student.model.parameters(), lr=1e-3)
+#     observations = np.concatenate([demo_path['observations'] for demo_path in demo_paths], axis = 0)
+#     actions = np.concatenate([demo_path['actions'] for demo_path in demo_paths], axis = 0)
+#     num_samples = observations.shape[0]
+#     mb_size = 64
+#     for _ in range(5):
+#         for _ in range(num_samples//mb_size):
+#             rand_idx = np.random.choice(num_samples, size=mb_size)
+#             bc_optimizer.zero_grad()
+#             obs = torch.from_numpy(observations[rand_idx]).to(device)
+#             gt_act = torch.from_numpy(actions[rand_idx]).to(device)
+#             act = student.model(obs.float())
+#             loss = ((act[0] - gt_act.detach())**2).mean()
+#             loss.backward()
+#             bc_optimizer.step()
+#         print(loss.item())
+#     score = evaluate_policy(test_e, student.model, num_episodes=25, mean_action=True, device=device)
+#     print("Score with behavior cloning in Asynchronous case =", score)
+#
+#     score = evaluate_policy(expert_e, student.model, num_episodes=25, mean_action=True, device=device)
+#     print("Score with behavior cloning =", score)

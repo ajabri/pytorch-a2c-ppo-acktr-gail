@@ -113,6 +113,7 @@ class AsyncWrapper(gym.Wrapper):
         self.no_op_action = no_op_action
         self.no_op = no_op
         self.which_obs = 'first' #TODO: implement it.
+        self.action_dim = self.env.action_space.shape
 
     def reset(self):
         obs = self.env.reset()
@@ -127,20 +128,29 @@ class AsyncWrapper(gym.Wrapper):
                 actions.append(no_op)
         actions.append(action)
         for action in actions:
+            if self.action_dim == ():
+                action = action[0]
             obs, reward, done, info = self.env.step(action)
             rewards += reward
             for k in info.keys():
                 if k in infos:
                     infos[k].append(info[k])
                 else:
-                    infos[k] = []
+                    infos[k] = [info[k]]
             if done:
                 break
         return obs, rewards, done, infos
 
+    def full_obs(self):
+        rgb_img = self.env.render(mode='rgb_array')
+        rgb_img2 = rgb_img.copy() #200x200x3
+        rgb_img2 = rgb_img2//4
+        return rgb_img2, rgb_img
+
 
 class NormAsyncWrapper(gym.Wrapper):
-    def __init__(self, env, obs_interval, predict_interval, no_op=False, no_op_action=None, gamma=None):
+    def __init__(self, env, obs_interval, predict_interval, no_op=False,
+                 no_op_action=None, gamma=None, stop_at_done=False):
         # missing variables below
         env.reward_range = (-float('inf'), float('inf'))
         env.metadata = None
@@ -160,6 +170,7 @@ class NormAsyncWrapper(gym.Wrapper):
         self.ret = 0
         self.gamma = gamma
         self.epsilon = 1e-8
+        self.stop_at_done = stop_at_done
 
     def reset(self):
         obs = self.env.reset()

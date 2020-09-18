@@ -19,6 +19,114 @@ def act(actor_critic, obs, recurrent_hidden_states, masks, **kwargs):
 
         return value, action, action_log_prob, recurrent_hidden_states
 
+def visualize_episode(actor_critic,
+             log_dict,
+             env_name,
+             seed,
+             device,
+             save_dir = './saved',
+             persistent = False,
+             ops = False,
+             resolution_scale = 1,
+             image_stack=False,
+             async_params=[1, 1, False]):
+    num_processes = 16
+    eval_envs = make_vec_envs(env_name, seed + num_processes, num_processes,
+                              None, '', device, True, get_pixel = True, resolution_scale = resolution_scale, image_stack=image_stack)
+
+    eval_episode_rewards = []
+    obs = eval_envs.reset()
+    step_indices = torch.from_numpy(np.array([0 for _ in range(num_processes)])).to(device)
+
+    recurrent_hidden_size = actor_critic[0].recurrent_hidden_state_size * 2 if persistent else actor_critic[0].recurrent_hidden_state_size
+
+    eval_recurrent_hidden_states = torch.zeros(
+        num_processes, recurrent_hidden_size, device=device)
+
+    eval_masks = torch.zeros(num_processes, 1, device=device)
+
+    all_paths = [[] for _ in range(num_processes)]
+    all_dones = [[] for _ in range(num_processes)]
+
+    dicrete_action = (eval_envs.action_space.__class__.__name__ == "Discrete")
+    while len(eval_episode_rewards) < 16: #increase it so that now all the episodes termiante
+        value1, action1, action_log_prob1, recurrent_hidden_states1 = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
+        if not ops:
+            action1 = torch.zeros(action1.shape).to(device).long()
+
+        if len(eval_episode_rewards) == 0:
+            if dicrete_action:
+                action2 = torch.zeros(action1.shape).to(device).long()
+            else:
+                action2 = torch.zeros((num_processes, eval_envs.action_space.shape[0])).to(device).long()
+
+        if dicrete_action:
+            last_action = 1 + action2
+        else:
+            last_action = action2.float()
+            action1 = action1.float()
+
+        value2, action2, action_log_prob2, recurrent_hidden_states2 = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
+            info=[torch.cat([action1, last_action], dim=1), step_indices])
+
+        action = action2
+        eval_recurrent_hidden_states = recurrent_hidden_states2
+
+        obs, reward, done, infos = eval_envs.step(torch.cat((action1, action), dim=-1))
+        step_indices = torch.from_numpy(np.array([info['step_index'] for info in infos])).to(device)
+
+        imgs = np.array(eval_envs.full_obs())
+        if action1.shape[-1] > 1:
+            gate = action1[:, 0].byte().squeeze()
+        else:
+            gate = action1.byte().squeeze()
+
+        if gate.is_cuda:
+            gate = gate.reshape((-1, 1, 1, 1)).cpu().data.numpy()
+        else:
+            gate = gate.reshape((-1, 1, 1, 1)).data.numpy()
+
+
+        imgs = imgs[:, 0] * gate + imgs[:, 1] * (1-gate)
+        for (im, paths, d, dones) in zip(imgs, all_paths, done, all_dones):
+            paths.append(im[:, :, :3])
+            dones.append(d)
+
+        eval_masks = torch.tensor(
+            [[0.0] if done_ else [1.0] for done_ in done],
+            dtype=torch.float32,
+            device=device)
+
+        for info in infos:
+            if 'episode' in info.keys():
+                eval_episode_rewards.append(info['episode']['r'])
+
+    eval_envs.close()
+    all_dones = np.array(all_dones)
+    rows, columns = np.where(all_dones == True)
+    total = []
+    epi_length = all_dones.shape[1]
+    total_for_img = []
+
+    for i in range(num_processes):
+        if i in rows: #if at least one of the episodes in this process terminates
+            idx = np.where(rows == i)[0][0]
+            r, done = i, columns[idx]
+            path = np.array(all_paths[r])
+            total.append(path[:done+1])
+        # else:
+        #     total.append(np.array(all_paths[i]))
+        _, H, W, D = imgs.shape
+        total.append(np.zeros((3, H, W, D)))
+
+
+    total = np.clip(np.concatenate(total), 0, 255)
+    total = np.transpose(total, (0, 3, 1, 2))
+
+    return total, np.mean(eval_episode_rewards), action1.float().mean().item()
+
+
+
 def sample_paths(actor_critic,
              env_name,
              seed,

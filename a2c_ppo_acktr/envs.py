@@ -100,7 +100,8 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
         else:
             env = gym.make(env_id)
             no_op_action = 0
-            env = ResizeObservation(env, prop=resolution_scale)
+            if len(env.observation_space.shape) == 3:
+                env = ResizeObservation(env, prop=resolution_scale)
 
         obs_interval, predict_interval, no_op = async_params
         if async_type == 0:
