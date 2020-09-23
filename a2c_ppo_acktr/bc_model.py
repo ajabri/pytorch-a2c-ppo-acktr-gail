@@ -22,6 +22,7 @@ class Model(torch.nn.Module):
             init_(nn.Linear(hidden_size+act_dim, hidden_size)), nn.ReLU(),
             init_(nn.Linear(hidden_size, hidden_size)), nn.ReLU(),
             )
+        self.act_dim = act_dim
         self.hidden_size = hidden_size
         self.out = nn.Linear(hidden_size, act_dim)
 
@@ -70,70 +71,82 @@ class Ops:
 
         return value_loss, action_loss, dist_entropy
 
+    def init_memory(self):
+        recurrent_hidden_state = torch.zeros((1, self.policy2.model.hidden_size), device=self.device)
+        mask = torch.zeros((1, 1), device=self.device)
+        done = False
+        decision = torch.zeros((1, 1), device=self.device)
+        last_a = torch.zeros((1, self.policy2.model.act_dim), device=self.device)
+        step = 0
+        info = {'valid_obs': True}
+        return recurrent_hidden_state, mask, done, decision, last_a, step, info
 
-    def evaluate(self, env, log_info, env_name, rollout_num, ops=True, async_params=None, seed=1):
-        returns = []
+
+
+    def evaluate(self, env, log_info, env_name, rollout_num, pred_method='none', async_params=None, seed=1):
         all_env_infos = []
         all_decisions = []
 
         for epi in range(rollout_num):
             obs = env.reset()
             self.rollouts.obs[0][epi].copy_(torch.from_numpy(obs).float())
-            recurrent_hidden_state = torch.zeros((1, self.policy2.model.hidden_size), device=self.device)
-            mask = torch.zeros((1, 1), device=self.device)
-            done = False
-            step = 0
-            totalr = 0
+            data_num = 0
+            recurrent_hidden_state, mask, done, decision, last_a, step, info = self.init_memory()
             path = {'env_infos': {'goal_achieved': []}}
             record_success = True
-            # while step < env._horizon and done == False:
-            while step < env._horizon:
+            num_samples = env._horizon
+            memory = torch.cat((last_a, recurrent_hidden_state), dim=-1)
+            while step < num_samples:
+                cumulated_r = 0
                 with torch.no_grad():
-                    action, feature = self.policy2.model(torch.from_numpy(obs).float().reshape((1, -1)))
-                    action = action.numpy()
-                    if ops:
-
-                        # decision = torch.randint(0, 2, (1, 1))
+                    if pred_method=='ops':
                         value, decision, action_log_prob, _ = self.policy1.act(
                                             torch.from_numpy(env._obfilt(obs)).float().reshape((1, -1)), recurrent_hidden_state, mask)
-                        # decision = torch.randint(0, 5, (1, 1))
-                        # decision = decision<3
-                        all_decisions.append(decision)
+                    elif pred_method == 'fixed':
+                        decision = torch.FloatTensor([float(info['valid_obs']==False)]).to(self.device).int()
+                    elif pred_method == 'random':
+                        decision = torch.randint(0, 2, (1, 1))
                     else:
                         decision = torch.zeros((1))
+                    all_decisions.append(decision.numpy())
+                    action, feature = self.policy2.model(torch.from_numpy(obs).float().reshape((1, -1)), decision=decision, memory=memory)
+                    action = action.numpy()
 
                 real_act = np.concatenate((decision.numpy().reshape((-1)), action.reshape((-1))))
                 obs, r, done, info = env.step(real_act)
-                step += 1
+                cumulated_r += r
                 if record_success:
-                    totalr += r
-                    path['env_infos']['goal_achieved'].extend(info['goal_achieved'])
-                if ops:
-                    mask = torch.FloatTensor([0.0]).to(self.device) if done else torch.FloatTensor([1.0]).to(self.device)
-                    self.rollouts.insert_single(torch.from_numpy(env._obfilt(obs)).float(), feature.reshape((-1)), decision.reshape((-1)),
-                                    action_log_prob.reshape((-1)), value.reshape((-1)), torch.FloatTensor([r]).reshape((-1)),
-                                    masks = mask, bad_masks = torch.FloatTensor([0.0]).to(self.device), idx=epi)
-
-                recurrent_hidden_state = feature.reshape((1, -1))
-                mask = mask.reshape((1, -1))
+                    path['env_infos']['goal_achieved'].append(info['goal_achieved'])
                 if done:
                     obs = env.reset()
-                    mask = torch.zeros((1, 1), device=self.device)
                     record_success = False
-            returns.append(totalr)
-            all_env_infos.append(path)
+                if pred_method == 'ops' and (info['valid_obs'] or bool(decision==1)):
+                    mask = torch.FloatTensor([0.0]).to(self.device) if done else torch.FloatTensor([1.0]).to(self.device)
+                    bad_masks = torch.FloatTensor([1.0]).to(self.device) if (step == env._horizon and done) else torch.FloatTensor([0.0]).to(self.device)
+                    self.rollouts.insert_single(torch.from_numpy(env._obfilt(obs)).float(), feature.reshape((-1)), decision.reshape((-1)),
+                                    action_log_prob.reshape((-1)), value.reshape((-1)), torch.FloatTensor([r]).reshape((-1)),
+                                    masks = mask, bad_masks = bad_masks, idx=epi)
+                    data_num += 1
+                    cumulated_r = 0
+                elif pred_method != 'ops':
+                    data_num += 1
 
-        if ops:
+                if done:
+                    recurrent_hidden_state, mask, done, decision, last_a, step, info = self.init_memory()
+                step += 1
+                recurrent_hidden_state = feature.reshape((1, -1))
+                mask = mask.reshape((1, -1))
+
+            all_env_infos.append(path)
+        if pred_method == 'ops':
             value_loss1, action_loss1, dist_entropy1 = self.train_policy1(rollout_num)
             log_info['value_loss1'] = value_loss1
             log_info['action_loss1'] = action_loss1
             log_info['dist_entropy1'] = dist_entropy1
-            log_info['mean_gt'] = np.array(all_decisions).mean()
-        print([len(all_env_infos[i]['env_infos']['goal_achieved']) for i in range(40)])
+        log_info['mean_gt'] = np.mean(all_decisions)
+
         success_rate = evaluate_success(env_name, all_env_infos)
-        log_info['student_mean_return'] = np.mean(returns)
-        log_info['student_std_return'] = np.std(returns)
-        log_info['student_success_rate'] = success_rate
+        log_info['success_rate'] = success_rate
 
 
 
@@ -145,7 +158,7 @@ class ImitateTorch:
         self.act_dim = act_dim
         self.model = Model(obs_dim, act_dim, hidden_size).to(device)
 
-    def train(self, X, Y, last_Y, epochs=1, ops=True, lr=0.01):
+    def train(self, X, Y, last_Y, epochs=1, pred_method='none', lr=0.01):
         criterion = nn.MSELoss()
         optimizer = optim.SGD(self.model.parameters(), lr = lr)
         X, Y, last_Y = torch.from_numpy(X).float(), torch.from_numpy(Y).float(), torch.from_numpy(last_Y).float()
@@ -159,15 +172,11 @@ class ImitateTorch:
                 inputs, labels, memory = data
                 inputs, labels, memory = inputs.to(self.device), labels.to(self.device), memory.to(self.device)
                 decision = memory[:, 0].reshape((-1, 1))
-                if not ops:
+                if pred_method=='none':
                     assert decision.sum() == 0
                 memory = memory[:, 1:]
                 optimizer.zero_grad()
                 action, features = self.model(inputs, decision=decision, memory=memory)
-                # if not ops:
-                #     loss = criterion(action, labels)
-                # else:
-                #     loss = criterion(action, labels) + 0.1* self.model.pred_loss(inputs, memory)
                 loss = criterion(action, labels)
                 loss.backward()
                 optimizer.step()
@@ -195,28 +204,32 @@ class DaggerPolicy:
         self.act_data = np.empty([self.CAPACITY, act_dim])
         self.info = np.empty([self.CAPACITY, act_dim+student.model.hidden_size+1])
 
-    def __call__(self, obs, memory, done, last_a, ops=True, device='cpu'):
+    def __call__(self, obs, memory, done, last_a, predict=False, pred_method='none', device='cpu'):
         expert_action = self.expert.get_action(obs)[1]['mean']
         self.obs_data[self.next_idx] = np.float32(obs)
         self.act_data[self.next_idx] = np.float32(expert_action)
         with torch.no_grad():
-            if ops:
+            if pred_method=='ops':
                 _, decision, _, _ = self.policy1.act(torch.from_numpy(obs).float().reshape((1, -1)), memory, done)
-                # decision = torch.randint(0, 2, (1, 1)).to(device)
+            elif pred_method == 'fixed':
+                decision = torch.FloatTensor([float(predict)]).to(device).int()
+            elif pred_method == 'random':
+                decision = torch.randint(0, 2, (1, 1))
             else:
                 decision = torch.zeros((1, 1)).to(device)
+            decision = decision.reshape((1, -1))
 
+            info = np.concatenate((decision, last_a.reshape((1, -1)), memory.reshape((1, -1))), axis = -1)
             student_action, memory = self.student(obs.reshape((1, -1)), decision=decision, memory=torch.cat((last_a, memory), dim=-1))
             memory = memory.data.numpy()
 
-        info = np.concatenate((decision.reshape((1, -1)), student_action.reshape((1, -1)), memory.reshape((1, -1))), axis = -1)
-        self.info[(self.next_idx+1) % self.CAPACITY] = info
+        self.info[self.next_idx] = info
         self.next_idx = (self.next_idx+1) % self.CAPACITY
         self.size = min(self.size+1, self.CAPACITY)
         return expert_action, memory
 
 
-def get_data(env, policy_fn, num_rollouts, env_name, render=False, device='cpu', hidden_size=32, ops=True):
+def get_data(env, policy_fn, num_rollouts, env_name, render=False, device='cpu', hidden_size=32, pred_method='none'):
     returns = []
     all_paths = []
     for _ in range(num_rollouts):
@@ -227,9 +240,9 @@ def get_data(env, policy_fn, num_rollouts, env_name, render=False, device='cpu',
         step = 0
         totalr = 0
         path = {'env_infos': {'goal_achieved': []}}
-        # while step < env._horizon and done == False:
         while not done:
-            action, memory = policy_fn(np.float32(obs), memory.reshape((1, -1)), done, last_a.reshape((1, -1)), ops=ops)
+            action, memory = policy_fn(np.float32(obs), memory.reshape((1, -1)), done,
+                                       last_a.reshape((1, -1)), predict=bool(step), pred_method=pred_method)
             mask = np.zeros((1))
             real_act = np.concatenate((mask, action))
             obs, r, done, info = env.step(real_act)
@@ -237,15 +250,15 @@ def get_data(env, policy_fn, num_rollouts, env_name, render=False, device='cpu',
             path['env_infos']['goal_achieved'].append(info['goal_achieved'])
             memory = torch.from_numpy(memory).to(device)
             last_a = torch.from_numpy(action).to(device)
+            step = (step + 1) % env.obs_interval
         returns.append(totalr)
         all_paths.append(path)
 
     success_rate = evaluate_success(env_name, all_paths)
 
     log_info = {}
-    log_info['mean_return'] = np.mean(returns)
-    log_info['std_return'] = np.std(returns)
-    log_info['success_rate'] = success_rate
+    log_info['expert_mean_return'] = np.mean(returns)
+    log_info['expert_success_rate'] = success_rate
 
     return None, log_info
 

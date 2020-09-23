@@ -20,7 +20,6 @@ def act(actor_critic, obs, recurrent_hidden_states, masks, **kwargs):
         return value, action, action_log_prob, recurrent_hidden_states
 
 def visualize_episode(actor_critic,
-             log_dict,
              env_name,
              seed,
              device,
@@ -30,9 +29,13 @@ def visualize_episode(actor_critic,
              resolution_scale = 1,
              image_stack=False,
              async_params=[1, 1, False]):
-    num_processes = 16
+
+    print("Start to evaluate...")
+    num_processes = 4
     eval_envs = make_vec_envs(env_name, seed + num_processes, num_processes,
-                              None, '', device, True, get_pixel = True, resolution_scale = resolution_scale, image_stack=image_stack)
+                              None, '', device, True, get_pixel = True,
+                              resolution_scale = resolution_scale, image_stack=image_stack,
+                              async_params=async_params, record_imgs=True)
 
     eval_episode_rewards = []
     obs = eval_envs.reset()
@@ -49,7 +52,7 @@ def visualize_episode(actor_critic,
     all_dones = [[] for _ in range(num_processes)]
 
     dicrete_action = (eval_envs.action_space.__class__.__name__ == "Discrete")
-    while len(eval_episode_rewards) < 16: #increase it so that now all the episodes termiante
+    while len(eval_episode_rewards) < num_processes: #increase it so that now all the episodes termiante
         value1, action1, action_log_prob1, recurrent_hidden_states1 = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
         if not ops:
             action1 = torch.zeros(action1.shape).to(device).long()
@@ -75,7 +78,7 @@ def visualize_episode(actor_critic,
         obs, reward, done, infos = eval_envs.step(torch.cat((action1, action), dim=-1))
         step_indices = torch.from_numpy(np.array([info['step_index'] for info in infos])).to(device)
 
-        imgs = np.array(eval_envs.full_obs())
+        imgs = eval_envs.full_obs()
         if action1.shape[-1] > 1:
             gate = action1[:, 0].byte().squeeze()
         else:
@@ -87,10 +90,15 @@ def visualize_episode(actor_critic,
             gate = gate.reshape((-1, 1, 1, 1)).data.numpy()
 
 
-        imgs = imgs[:, 0] * gate + imgs[:, 1] * (1-gate)
-        for (im, paths, d, dones) in zip(imgs, all_paths, done, all_dones):
-            paths.append(im[:, :, :3])
-            dones.append(d)
+        # imgs = imgs[:, 0] * gate + imgs[:, 1] * (1-gate)
+        for (im, paths, d, dones, g) in zip(imgs, all_paths, done, all_dones, gate):
+            g = np.expand_dims(g, axis=0)
+            cur_num_step = len(im[0])
+            for i in range(cur_num_step):
+                colored_img = im[0][i] * g + im[1][i] * (1 - g)
+                for single_im in colored_img:
+                    paths.append(single_im[:, :, :3]) #(16, H, W, 3)
+            dones.extend([False for _ in range(cur_num_step-1)]+[d])
 
         eval_masks = torch.tensor(
             [[0.0] if done_ else [1.0] for done_ in done],
@@ -102,6 +110,10 @@ def visualize_episode(actor_critic,
                 eval_episode_rewards.append(info['episode']['r'])
 
     eval_envs.close()
+    longest = max([len(d) for d in all_dones])
+    for dones in all_dones:
+        for _ in range(longest - len(dones)):
+            dones.append(False)
     all_dones = np.array(all_dones)
     rows, columns = np.where(all_dones == True)
     total = []
@@ -116,9 +128,8 @@ def visualize_episode(actor_critic,
             total.append(path[:done+1])
         # else:
         #     total.append(np.array(all_paths[i]))
-        _, H, W, D = imgs.shape
+        H, W, D = imgs[0][0][0].shape
         total.append(np.zeros((3, H, W, D)))
-
 
     total = np.clip(np.concatenate(total), 0, 255)
     total = np.transpose(total, (0, 3, 1, 2))

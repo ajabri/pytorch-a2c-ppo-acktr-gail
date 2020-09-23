@@ -34,7 +34,7 @@ from a2c_ppo_acktr.utils import get_vec_normalize
 
 
 INSTANCE_TYPE = 'c4.xlarge'
-EXP_NAME = 'async/relocate'
+EXP_NAME = 'async/invert'
 
 
 class ClassEncoder(json.JSONEncoder):
@@ -139,33 +139,60 @@ def main(**kwargs):
 # NOTE: 200 paths, episode length 100
 
 if __name__ == "__main__":
-    # run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)
+
+    # sweep_params = {
+    #     'algo': 'dagger',
+    #     'seed': 111,
+    #     'env_name': 'InvertedPendulum-v2',
+    #
+    #     'cuda': False,
+    #     # 'proj_name': 'dagger',
+    #     'proj_name': 'debug',
+    #     'note': '',
+    #     'debug': False,
+    #     'hidden_size': 64,
+    #     'num_steps': 2048,
+    #     'gate_input': 'hid', #'obs' | 'hid'
+    #     'persistent': False,
+    #     'pred_loss': False,
+    #     'obs_interval': 1,
+    #     'predict_interval': 1,
+    #     'no_op': False,
+    #     'ops': True,
+    #     'clip_param': 0.1,
+    #     'entropy_coef': 5e-3,
+    #     'lr': 2.5e-2,
+    #     'bc_lr': 1e-3,
+    #     'num_processes': 4,
+    #     'num_mini_batch': 2,
+    #     }
+
 
     sweep_params = {
-        'algo': 'dagger',
-        'seed': 111,
-        'env_name': 'InvertedPendulum-v2',
+        'algo': ['dagger'],
+        'seed': [111, 123],
+        'env_name': ['InvertedPendulum-v2'],
 
-        'cuda': False,
+        'cuda': [False],
         # 'proj_name': 'dagger',
-        'proj_name': 'debug',
-        'note': '',
-        'debug': False,
-        'hidden_size': 64,
-        'num_steps': 2048,
-        'gate_input': 'hid', #'obs' | 'hid'
-        'persistent': False,
-        'pred_loss': False,
-        'obs_interval': 1,
-        'predict_interval': 1,
-        'no_op': False,
-        'ops': True,
-        'clip_param': 0.1,
-        'entropy_coef': 5e-3,
-        'lr': 2.5e-2,
-        'bc_lr': 1e-3,
-        'num_processes': 4,
-        'num_mini_batch': 2,
+        'proj_name': ['bc-gym'],
+        'note': [''],
+        'debug': [False],
+        'hidden_size': [64],
+        'num_steps': [2048],
+        'gate_input': ['hid'], #'obs' | 'hid'
+        'persistent': [False],
+        'pred_loss': [False],
+        'obs_interval': [1, 2, 3, 5],
+        'predict_interval': [1],
+        'no_op': [False],
+        'ops': [True, False],
+        'clip_param': [0.1],
+        'entropy_coef': [5e-3],
+        'lr': [2.5e-2],
+        'bc_lr': [1e-3],
+        'num_processes': [4],
+        'num_mini_batch': [2],
         }
 
 
@@ -173,4 +200,5 @@ if __name__ == "__main__":
     # for arg in vars(args):
     #     sweep_params[arg] = getattr(args, arg)
 
-    main(**sweep_params)
+    # main(**sweep_params)
+    run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)

@@ -45,12 +45,12 @@ try:
 except ImportError:
     pass
 
-from gym.wrappers import FlattenObservation
+# from gym.wrappers import FlattenObservation
 from a2c_ppo_acktr.wrappers import *
 
 def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
              resolution_scale = 1., async_params=[1, 1, False],
-             async_type=0, gamma=None):
+             async_type=0, gamma=None, record_imgs=False):
     def _thunk():
         if env_id.startswith("dm"):
             _, domain, task = env_id.split('.')
@@ -99,14 +99,14 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, get_pixel = False,
             no_op_action = 0
         else:
             env = gym.make(env_id)
-            no_op_action = 0
+            no_op_action = [0]
             if len(env.observation_space.shape) == 3:
                 env = ResizeObservation(env, prop=resolution_scale)
 
         obs_interval, predict_interval, no_op = async_params
         if async_type == 0:
             env = AsyncWrapper(env, obs_interval=obs_interval, predict_interval=predict_interval,
-                               no_op=no_op, no_op_action = no_op_action)
+                               no_op=no_op, no_op_action = no_op_action, record_imgs=record_imgs)
         elif async_type == 1:
             env = NormAsyncWrapper(env, obs_interval=obs_interval, predict_interval=predict_interval,
                                    no_op=no_op, no_op_action = no_op_action, gamma=gamma)
@@ -162,11 +162,12 @@ def make_vec_envs(env_name,
                   image_stack=False,
                   async_params=[1, 1, False],
                   async_type=0,
-                  normalize=True):
+                  normalize=True,
+                  record_imgs=False):
     envs = [
         make_env(env_name, seed, i, log_dir, allow_early_resets, get_pixel=get_pixel,
                  resolution_scale=resolution_scale, async_params=async_params,
-                 async_type=async_type, gamma=gamma)
+                 async_type=async_type, gamma=gamma, record_imgs=record_imgs)
         for i in range(num_processes)
     ]
 
