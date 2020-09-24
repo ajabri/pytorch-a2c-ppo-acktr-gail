@@ -123,9 +123,6 @@ class AsyncWrapper(gym.Wrapper):
 
     def reset(self):
         obs = self.env.reset()
-        rgb_img = self.env.render(mode='rgb_array')
-        if self.record_imgs:
-            self.img_list = [rgb_img]
         if self.action_dim == ():
             self.last_action = 0
         else:
@@ -146,8 +143,6 @@ class AsyncWrapper(gym.Wrapper):
             if self.action_dim == ():
                 action = action[0]
             obs, reward, done, info = self.env.step(action)
-            # if self.record_imgs:
-            #     self.img_list.append(self.env.render(mode='rgb_array'))
             rewards += reward
             for k in info.keys():
                 if k in infos:
@@ -156,21 +151,8 @@ class AsyncWrapper(gym.Wrapper):
                     infos[k] = [info[k]]
             if done:
                 break
-        # if self.record_imgs:
-        #     if len(self.img_list) > 1:
-        #         self.img_list = [i//2 for i in self.img_list[:-1]] + self.img_list[-1]
         return obs, rewards, done, infos
 
-    def full_obs(self):
-        rgb_img, rgb_img2 = [], []
-        for img in self.img_list:
-            img2 = img.copy() #200x200x3
-            r, g, b = img2[:, :, 0], img2[:, :, 1], img2[:, :, 2]
-            indices = np.logical_and(r<155, np.logical_and(g<155, b<155))
-            img2[indices] = img2[indices] + np.array([0, 0, 100])
-            rgb_img.append(img)
-            rgb_img2.append(img2)
-        return rgb_img2, rgb_img
 
 
 

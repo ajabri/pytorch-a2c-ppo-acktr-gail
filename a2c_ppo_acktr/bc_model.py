@@ -25,7 +25,7 @@ class Model(torch.nn.Module):
         self.act_dim = act_dim
         self.hidden_size = hidden_size
         self.out = nn.Linear(hidden_size, act_dim)
-
+ 
     def forward(self, x, decision=None, memory=None):
         if decision == None:
             decision = torch.zeros((x.shape[0], 1))
