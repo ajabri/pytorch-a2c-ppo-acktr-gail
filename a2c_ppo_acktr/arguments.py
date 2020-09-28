@@ -150,6 +150,12 @@ def get_args():
         default=False,
         help='use a linear schedule on the learning rate')
 
+    # parser.add_argument(
+    #     '--bonus1',
+    #     type=float,
+    #     default=0.0,
+    #     help='coefficient for bonus reward')
+
     parser.add_argument(
         '--bonus1',
         type=float,
@@ -157,10 +163,25 @@ def get_args():
         help='coefficient for bonus reward')
 
     parser.add_argument(
+        '--obs-interval',
+        type=int,
+        default=1)
+
+    parser.add_argument(
+        '--pred_interval',
+        type=int,
+        default=1)
+
+    parser.add_argument(
         '--debug',
         action='store_true',
         default=False,
         help='debug, skip visualize, pdb on error')
+
+    parser.add_argument(
+        '--ops',
+        action='store_true',
+        default=False)
 
     parser.add_argument(
         '--partial-obs',

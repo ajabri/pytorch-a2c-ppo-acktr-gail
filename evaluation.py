@@ -4,331 +4,110 @@ import torch
 from a2c_ppo_acktr import utils
 from a2c_ppo_acktr.envs import make_vec_envs
 from pdb import set_trace as st
+import time
 import cv2
-import imageio
-import os
 import gym
-from collections import deque
+import wandb
 
+def to_hist(collected_agent_views):
+    img_list = []
+    for agent_views in collected_agent_views[:4]:
+        im = np.max(agent_views, axis=0)
+        img_list.append(im)
 
-def act(actor_critic, obs, recurrent_hidden_states, masks, **kwargs):
-    with torch.no_grad():
-        value, action, action_log_prob, recurrent_hidden_states = actor_critic.act(
-            obs, recurrent_hidden_states,
-            masks, **kwargs)
+    H, W, D = img_list[0].shape
+    split = int(np.sqrt(len(img_list)))
+    vertical = np.concatenate(img_list)
+    result = np.concatenate(np.reshape(vertical, [split, H*split, W, D]), axis=1)
+    return result
 
-        return value, action, action_log_prob, recurrent_hidden_states
+def to_video(list_of_imgs):
+    """input: [4, img]"""
+    real_imgs = []
+    for imgs in list_of_imgs:
+        real_imgs.append(imgs)
+        H, W, D = imgs[0].shape
+        real_imgs.append(np.zeros((10, H, W, D)))
+    real_imgs = np.transpose(np.concatenate(real_imgs), (0, 3, 1, 2))
+    return real_imgs
 
+def concat_views(real_state, agent_view):
+    H, W, D = real_state.shape
+    border = np.zeros((H, 3, D))
+    return np.concatenate((real_state, border, agent_view), axis=1)
 
-def evaluate_actions(actor_critic,
-             env_name,
-             seed,
-             num_processes,
-             device,
-             epoch,
-             bonus1,
-             save_dir = './saved',
-             tile_size = 1,
-             persistent = False,
-             always_zero = False,
-             resolution_scale = 1,
-             image_stack=False):
+def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
+             device, log_dict, async_params=[1, 1], j=0):
+    """we also need some visualizations. """
     eval_envs = make_vec_envs(env_name, seed + num_processes, num_processes,
-                              None, '', device, True, get_pixel = True, resolution_scale = resolution_scale, image_stack=image_stack)
+                              None, eval_log_dir, device, True, async_params=async_params)
+
+    vec_norm = utils.get_vec_normalize(eval_envs)
+    if vec_norm is not None:
+        vec_norm.eval()
+        vec_norm.ob_rms = ob_rms
 
     eval_episode_rewards = []
-    count = 10
-    success_rates = deque(maxlen=count)
+
     obs = eval_envs.reset()
-    step_indices = torch.from_numpy(np.array([0 for _ in range(num_processes)])).to(device)
-
-    if persistent:
-        recurrent_hidden_size = actor_critic[0].recurrent_hidden_state_size * 2
-    else:
-        recurrent_hidden_size = actor_critic[0].recurrent_hidden_state_size
-
     eval_recurrent_hidden_states = torch.zeros(
-        num_processes, recurrent_hidden_size, device=device)
-
+        num_processes, actor_critic.recurrent_hidden_state_size, device=device)
     eval_masks = torch.zeros(num_processes, 1, device=device)
 
-    all_paths = [[] for _ in range(num_processes)]
+    eval_views, pairs = [[] for _ in range(num_processes)], [[] for _ in range(num_processes)]
+    collected_views, collected_pairs = [], []
+    max_size = 50
 
-    dicrete_action = (eval_envs.action_space.__class__.__name__ == "Discrete")
-    while len(eval_episode_rewards) < count: #increase it so that now all the episodes termiante
-        value1, action1, action_log_prob1, recurrent_hidden_states1 = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
+    start = time.time()
+    while len(eval_episode_rewards) < 4:
+        with torch.no_grad():
+            _, action, _, eval_recurrent_hidden_states = actor_critic.act(
+                obs,
+                eval_recurrent_hidden_states,
+                eval_masks,
+                deterministic=True)
 
-        if always_zero:
-            action1 = torch.zeros(action1.shape).to(device).long()
-
-        if len(eval_episode_rewards) == 0:
-            if dicrete_action:
-                action2 = torch.zeros(action1.shape).to(device).long()
+        # Obser reward and next obs
+        obs, _, done, infos = eval_envs.step(action)
+        full_obs = eval_envs.full_obs() #[num_processes, ((210, 160, 3), (210, 160, 3))]
+        decisions = np.zeros((num_processes, 1))
+        for (pair, eval_view, full_ob, decision, d, idx, info) in zip(pairs, eval_views, full_obs, decisions, done, range(num_processes), infos):
+            if full_ob[0].shape[0] > max_size:
+                scale = 1 / (full_ob[0].shape[0]//max_size)
+                state = cv2.resize(full_ob[0], None, fx=scale, fy=scale)
+                view = cv2.resize(full_ob[1], None, fx=scale, fy=scale)
             else:
-                action2 = torch.zeros((num_processes, eval_envs.action_space.shape[0])).to(device).long()
+                state, view = full_ob
 
-        if dicrete_action:
-            last_action = 1 + action2
-        else:
-            last_action = action2.float()
-            action1 = action1.float()
+            real_view = view * (1 - decision) + (view//2) * decision
+            if 'episode' in info.keys():
+                pair.append(concat_views(state, real_view))
+                eval_view.append(real_view)
+                eval_episode_rewards.append(info['episode']['r'])
 
-        value2, action2, action_log_prob2, recurrent_hidden_states2 = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
-            info=[torch.cat([action1, last_action], dim=1), step_indices])
-
-        action = action2
-        eval_recurrent_hidden_states = recurrent_hidden_states2
-
-        obs, reward, done, infos = eval_envs.step(action)
-        step_indices = torch.from_numpy(np.array([info['step_index'] for info in infos])).to(device)
-
-        if action1.shape[-1] > 1:
-            gate = action1[:, 0].byte().squeeze()
-        else:
-            gate = action1.byte().squeeze()
+                collected_views.append(eval_view)
+                collected_pairs.append(pair)
+                pairs[idx] = []
+                eval_views[idx] = []
+            elif not d:
+                pair.append(concat_views(state, real_view))
+                eval_view.append(real_view)
+            elif d:
+                # ignore the episodes that failed
+                pairs[idx] = []
+                eval_views[idx] = []
 
         eval_masks = torch.tensor(
             [[0.0] if done_ else [1.0] for done_ in done],
             dtype=torch.float32,
             device=device)
 
-        for info in infos:
-            if 'episode' in info.keys():
-                eval_episode_rewards.append(info['episode']['r'])
-            if is_success in info.keys():
-                success_rates.append(info['is_success'])
     eval_envs.close()
+    imgs = to_hist(collected_views)
+    pairs = to_video(collected_pairs)
 
-    return np.mean(success_rates), np.mean(eval_episode_rewards)
-
-
-
-def save_gif(actor_critic,
-             env_name,
-             seed,
-             num_processes,
-             device,
-             epoch,
-             bonus1,
-             save_dir = './saved',
-             tile_size = 1,
-             persistent = False,
-             always_zero = False,
-             resolution_scale = 1,
-             image_stack=False,
-             async_params=[1, 1, False]):
-    eval_envs = make_vec_envs(env_name, seed + num_processes, num_processes,
-                              None, '', device, True, get_pixel = True, resolution_scale = resolution_scale, image_stack=image_stack)
-
-    eval_episode_rewards = []
-    obs = eval_envs.reset()
-    _, C, H, W = obs.shape
-    step_indices = torch.from_numpy(np.array([0 for _ in range(num_processes)])).to(device)
-
-    if persistent:
-        recurrent_hidden_size = actor_critic[0].recurrent_hidden_state_size * 2
-    else:
-        recurrent_hidden_size = actor_critic[0].recurrent_hidden_state_size
-
-    eval_recurrent_hidden_states = torch.zeros(
-        num_processes, recurrent_hidden_size, device=device)
-
-    eval_masks = torch.zeros(num_processes, 1, device=device)
-
-    all_paths = [[] for _ in range(num_processes)]
-
-    if env_name.startswith("MiniWorld"):
-        all_top_views = [[] for _ in range(num_processes)]
-
-    all_dones = [[] for _ in range(num_processes)]
-
-    dicrete_action = (eval_envs.action_space.__class__.__name__ == "Discrete")
-    while len(eval_episode_rewards) < 16: #increase it so that now all the episodes termiante
-        value1, action1, action_log_prob1, recurrent_hidden_states1 = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
-
-        if always_zero:
-            action1 = torch.zeros(action1.shape).to(device).long()
-
-        if len(eval_episode_rewards) == 0:
-            if dicrete_action:
-                action2 = torch.zeros(action1.shape).to(device).long()
-            else:
-                action2 = torch.zeros((num_processes, eval_envs.action_space.shape[0])).to(device).long()
-
-        if dicrete_action:
-            last_action = 1 + action2
-        else:
-            last_action = action2.float()
-            action1 = action1.float()
-
-        value2, action2, action_log_prob2, recurrent_hidden_states2 = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
-            info=[torch.cat([action1, last_action], dim=1), step_indices])
-
-        action = action2
-        eval_recurrent_hidden_states = recurrent_hidden_states2
-
-        obs, reward, done, infos = eval_envs.step(torch.cat((action1, action), dim=-1))
-        step_indices = torch.from_numpy(np.array([info['step_index'] for info in infos])).to(device)
-
-        imgs = np.array(eval_envs.full_obs())
-        if action1.shape[-1] > 1:
-            gate = action1[:, 0].byte().squeeze()
-        else:
-            gate = action1.byte().squeeze()
-        if gate.is_cuda:
-            gate = gate.reshape((-1, 1, 1, 1)).cpu().data.numpy()
-        else:
-            gate = gate.reshape((-1, 1, 1, 1)).data.numpy()
-
-        if env_name.startswith("MiniWorld"):
-            # print(obs.shape, imgs.shape) [16, 12, 60, 80] (16, 60, 80, 3)
-            colored_obs = imgs[:, 2] * gate + imgs[:, 3] * (1-gate) #this is a top down view
-            imgs = imgs[:, 0] * gate + imgs[:, 1] * (1-gate) #this is a top down view
-
-            for (ob, im, paths, d, dones, top_view) in zip(colored_obs, imgs, all_paths, done, all_dones, all_top_views):
-                paths.append(ob[:, :, :3])
-                dones.append(d)
-                top_view.append(im)
-        else:
-            imgs = imgs[:, 0] * gate + imgs[:, 1] * (1-gate)
-            for (im, paths, d, dones) in zip(imgs, all_paths, done, all_dones):
-                paths.append(im[:, :, :3])
-                dones.append(d)
-
-
-        eval_masks = torch.tensor(
-            [[0.0] if done_ else [1.0] for done_ in done],
-            dtype=torch.float32,
-            device=device)
-
-        for info in infos:
-            if 'episode' in info.keys():
-                eval_episode_rewards.append(info['episode']['r'])
-
-    if env_name.startswith("MiniGrid-MultiRoom"):
-        all_dones = np.array(all_dones)
-        # rows, columns = np.where(all_dones=True)
-        # total = []
-        # epi_length = all_dones.shape[1]
-        # total_for_img = []
-        # """only save the episodes that terminate. """
-        # # it's possible that there are two or none-dones
-        # row_record = []
-        # for (r, c) in zip(rows, columns):
-        #     if r not in row_record:
-        #         row_record.append(r)
-        #         path = np.array(all_paths[r])
-        #         done = c
-        #         path[done:] = 0
-        #         total_for_img.append(path)
-        #         total.append(path[:done+1])
-        #
-        # if len(total_for_img) < num_processes:
-        #     for _ in range(num_processes - len(total_for_img)):
-        #         total_for_img.append(np.zeros((epi_length, 200, 200, 3)))
-        #
-        # all_paths = np.array(total_for_img)
-        # # change the color of the starting point
-        # r, g, b = all_paths[:, :, :, :, 0], all_paths[:, :, :, :, 1], all_paths[:, :, :, :, 2]
-        # # get all the agent positions
-        # indices = np.logical_or(np.logical_and(r!=0, np.logical_and(g==0, b==0)), np.logical_and(b!=0, np.logical_and(g==0, r==0)))
-        # # only choose the starting point
-        # indices[:, 1:] = False
-        # ratio = r[indices].reshape((-1, 1)) + b[indices].reshape((-1, 1))
-        # all_paths[indices] += ratio * np.array([0, 1, 0]).astype(all_paths.dtype)
-        # img_list = np.max(all_paths, axis = 1)
-        #
-        # num_processes, H, W, D = img_list.shape
-        # num = 4
-        # img_list = img_list.reshape((num_processes//num, num, H, W, D))
-        # img_list = np.transpose(img_list, (0, 2, 1, 3, 4))
-        # img_list = np.clip(img_list.reshape((num*H, num*W, D)), 0, 255)
-        #
-        # # print([t.shape for t in total])
-        # total = np.concatenate(total)
-        # dir_name = save_dir
-        # if os.path.isdir(dir_name) == False:
-        #     os.makedirs(dir_name)
-    elif env_name.startswith("MiniWorld"):
-        all_dones = np.array(all_dones)
-        rows, columns = np.where(all_dones == True)
-        total = []
-        epi_length = all_dones.shape[1]
-        total_for_img = []
-        """only save the episodes that terminate. """
-        # it's possible that there are two or none-dones
-
-        for i in range(num_processes):
-            if i in rows: #if at least one of the episodes in this process terminates
-                idx = np.where(rows == i)[0][0]
-                r, done = i, columns[idx]
-                path = np.array(all_paths[r])
-                path[done+1:] = 0
-                total.append(path[:done+1])
-                path = np.array(all_top_views[r])
-                path[done:] = 0
-                total_for_img.append(path)
-            else:
-                total_for_img.append(all_top_views[i])
-
-
-        all_paths = np.array(total_for_img)
-        # change the color of the starting point
-        r, g, b = all_paths[:, :, :, :, 0], all_paths[:, :, :, :, 1], all_paths[:, :, :, :, 2]
-        # get all the agent positions
-        indices = np.logical_or(np.logical_and(r!=0, np.logical_and(g==0, b==0)), np.logical_and(b!=0, np.logical_and(g==0, r==0)))
-        # only choose the starting point
-        indices[:, 1:] = False
-        ratio = r[indices].reshape((-1, 1)) + b[indices].reshape((-1, 1))
-        all_paths[indices] += ratio * np.array([0, 1, 0]).astype(all_paths.dtype)
-        img_list = np.max(all_paths, axis = 1)
-
-        num_processes, H, W, D = img_list.shape
-        num = 4
-        img_list = img_list.reshape((num_processes//num, num, H, W, D))
-        img_list = np.transpose(img_list, (0, 2, 1, 3, 4))
-        img_list = np.clip(img_list.reshape((num*H, num*W, D)), 0, 255)
-    else:
-        all_dones = np.array(all_dones)
-        rows, columns = np.where(all_dones == True)
-        total = []
-        epi_length = all_dones.shape[1]
-        total_for_img = []
-
-        for i in range(num_processes):
-            if i in rows: #if at least one of the episodes in this process terminates
-                idx = np.where(rows == i)[0][0]
-                r, done = i, columns[idx]
-                path = np.array(all_paths[r])
-                total.append(path[:done+1])
-            else:
-                total.append(np.array(all_paths[i]))
-            _, D, H, W = obs.shape
-            total.append(np.zeros((1, H, W, D)))
-
-    if env_name.startswith("Mini"):
-        all_paths = np.array(total_for_img)
-        # change the color of the starting point
-        r, g, b = all_paths[:, :, :, :, 0], all_paths[:, :, :, :, 1], all_paths[:, :, :, :, 2]
-        # get all the agent positions
-        indices = np.logical_or(np.logical_and(r!=0, np.logical_and(g==0, b==0)), np.logical_and(b!=0, np.logical_and(g==0, r==0)))
-        # only choose the starting point
-        indices[:, 1:] = False
-        ratio = r[indices].reshape((-1, 1)) + b[indices].reshape((-1, 1))
-        all_paths[indices] += ratio * np.array([0, 1, 0]).astype(all_paths.dtype)
-        img_list = np.max(all_paths, axis = 1)
-
-        num_processes, H, W, D = img_list.shape
-        num = 4
-        img_list = img_list.reshape((num_processes//num, num, H, W, D))
-        img_list = np.transpose(img_list, (0, 2, 1, 3, 4))
-        img_list = np.clip(img_list.reshape((num*H, num*W, D)), 0, 255)
-
-    total = np.clip(np.concatenate(total), 0, 255)
-    total = np.transpose(total, (0, 3, 1, 2))
-
-    eval_envs.close()
-    if env_name.startswith("Mini"):
-        return img_list, total, np.mean(eval_episode_rewards), action1.float().mean().item()
-    else:
-        return total, np.mean(eval_episode_rewards), action1.float().mean().item()
+    log_dict['eval_len'] = len(eval_episode_rewards)
+    log_dict['mean_rew'] = np.mean(eval_episode_rewards)
+    log_dict['eval_time'] = time.time() - start
+    log_dict["hist " + str(j)] = wandb.Image(imgs)
+    log_dict["agent_views " + str(j)] = wandb.Video(pairs, fps=4, format="gif")

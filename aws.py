@@ -44,14 +44,14 @@ def main(**kwargs):
             kwargs[arg] = getattr(args, arg)
 
     torch.manual_seed(kwargs['seed'])
+    kwargs['always_zero'] = (kwargs['ops'] == False)
     if kwargs['cuda']:
         torch.cuda.manual_seed_all(kwargs['seed'])
-    device = torch.device("cuda:4" if kwargs['cuda'] else "cpu")
+    device = torch.device("cuda:5" if kwargs['cuda'] else "cpu")
     if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
 
-    # log_dir = os.path.expanduser(kwargs['log_dir'])
     exp_dir = os.getcwd() + '/data/' + EXP_NAME
     if os.path.isdir(exp_dir) == False:
         os.makedirs(exp_dir)
@@ -90,11 +90,7 @@ def main(**kwargs):
                 persistent=kwargs['persistent']),
                 )
 
-        if is_leaf:
-            lr = kwargs['lr'][1]
-        else:
-            lr = kwargs['lr'][0]
-
+        lr = kwargs['lr'][1] if is_leaf else kwargs['lr'][0]
         entropy_coef = kwargs['entropy_coef']
 
         if kwargs['algo'] == 'ppo':
@@ -171,10 +167,12 @@ def main(**kwargs):
 
         for step in range(kwargs['num_steps']):
             # Sample actions
-            value1, action1, action_log_prob1, _ = act(0, step)
+            # value1, action1, action_log_prob1, _ = act(0, step)
 
             if kwargs['always_zero']:
-                action1 = torch.zeros(action1.shape).to(device).long()
+                action1 = torch.zeros(rollouts[0].actions[0].shape).to(device).long()
+            else:
+                value1, action1, action_log_prob1, _ = act(0, step)
 
             if discrete_action:
                 last_action = rollouts[1].actions[step-1] + 1 #to distinguish actual action from default ones
@@ -207,9 +205,10 @@ def main(**kwargs):
             else:
                 scaled_reward = (action1 * kwargs['bonus1']).to(device) + reward.to(device)
 
-            rollouts[0].insert(obs, recurrent_hidden_states, action1,
-                            action_log_prob1, value1, scaled_reward, masks, bad_masks,
-                            infos=None)
+            if not kwargs['always_zero']:
+                rollouts[0].insert(obs, recurrent_hidden_states, action1,
+                                action_log_prob1, value1, scaled_reward, masks, bad_masks,
+                                infos=None)
 
             rollouts[1].insert(obs, recurrent_hidden_states, action2,
                             action_log_prob2, value2, reward, masks, bad_masks,
@@ -235,37 +234,26 @@ def main(**kwargs):
 
             return value_loss, action_loss, dist_entropy, pred_err
 
-        if j % 2 == 0 or True:
+
+
+        if not kwargs['always_zero']:
             print("updating agent 0")
             value_loss1, action_loss1, dist_entropy1, pred_err1 = update(0)
-        if (j % 2) == 1 or True:
-            print("updating agent 1")
-            # use updated pi_1
-            _, action1, _, _ = actor_critic[0].act(
-                    rollouts[0].obs[-1].to(device), rollouts[0].recurrent_hidden_states[-1],
-                    rollouts[0].masks[-1])
 
-            if discrete_action:
-                value_loss2, action_loss2, dist_entropy2, pred_err2 = update(1,
-                    info=[torch.cat([action1, rollouts[1].actions[-1]+1 ], dim=-1), step_indices])
-            else:
-                value_loss2, action_loss2, dist_entropy2, pred_err2 = update(1,
-                    info=[torch.cat([action1.float(), rollouts[1].actions[-1]], dim=-1), step_indices])
+        print("updating agent 1")
+        _, action1, _, _ = actor_critic[0].act(
+                rollouts[0].obs[-1].to(device), rollouts[0].recurrent_hidden_states[-1],
+                rollouts[0].masks[-1])
+
+        if discrete_action:
+            value_loss2, action_loss2, dist_entropy2, pred_err2 = update(1,
+                info=[torch.cat([action1, rollouts[1].actions[-1]+1 ], dim=-1), step_indices])
+        else:
+            value_loss2, action_loss2, dist_entropy2, pred_err2 = update(1,
+                info=[torch.cat([action1.float(), rollouts[1].actions[-1]], dim=-1), step_indices])
 
 
         # save for every interval-th episode or for the last epoch
-        if (j % kwargs['save_interval'] == 0 or j == num_updates - 1) and kwargs['save_dir'] != "":
-            save_path = os.path.join(kwargs['save_dir'], kwargs['algo'])
-            try:
-                os.makedirs(save_path)
-            except OSError:
-                pass
-
-            torch.save([
-                actor_critic,
-                getattr(utils.get_vec_normalize(envs), 'ob_rms', None)
-            ], os.path.join(save_path, kwargs['env_name'] + ".pt"))
-
         if j % kwargs['log_interval'] == 0 and len(episode_rewards) > 1:
             total_num_steps = (j + 1) * kwargs['num_processes'] * kwargs['num_steps']
             end = time.time()
@@ -280,73 +268,41 @@ def main(**kwargs):
             print('update_time:', time.time()-time_start)
 
             if not kwargs['debug']:
-                wandb.log(dict(
+                log_dict = dict(
                     median_reward=np.median(episode_rewards), mean_reward=np.mean(episode_rewards),
                     min_reward=np.min(episode_rewards), max_reward=np.max(episode_rewards),
-                    update_time=time.time()-time_start,
-                ))
-            time_start = time.time()
+                    update_time=time.time()-time_start, mean_gt=rollouts[0].actions.float().mean().item(),
+                    ent2=dist_entropy2, val2=value_loss2, aloss2=action_loss2, prederr2=pred_err2, itr=j,
+                )
 
-
-            if j % 5 == 0 and kwargs['env_name'].startswith("MiniGrid"):
-                data = rollouts[0].obs[:-1]
-                gate = rollouts[0].actions.byte().squeeze()
-
-                capt = data[1 - gate]
-                pred = data[gate]
-
-                if not kwargs['debug']:
-                    # wandb_lunarlander(capt, pred)
-                    logging.wandb_minigrid(capt, pred)
-
-
-            if not kwargs['debug']:
-                if (j % 2) == 0:
-                    wandb.log(dict(ent1=dist_entropy1, val1=value_loss1, aloss1=action_loss1,))
+                if not kwargs['always_zero']:
+                    log_dict['ent1'] = dist_entropy1
+                    log_dict['val1'] = value_loss1
+                    log_dict['aloss1'] = action_loss1
                     print("ent1 {:.4f}, val1 {:.4f}, loss1 {:.4f}\n".format(
                         dist_entropy1, value_loss1, action_loss1))
-                if (j % 2) == 1:
-                    wandb.log(dict(ent2=dist_entropy2, val2=value_loss2, aloss2=action_loss2, prederr2=pred_err2))
-                    print("ent2 {:.4f}, val2 {:.4f}, loss2 {:.4f}, prederr2 {:.4f}\n".format(
-                        dist_entropy2, value_loss2, action_loss2, pred_err2))
+                print("ent2 {:.4f}, val2 {:.4f}, loss2 {:.4f}, prederr2 {:.4f}\n".format(
+                    dist_entropy2, value_loss2, action_loss2, pred_err2))
 
-                wandb.log(dict(mean_gt=rollouts[0].actions.float().mean().item()))
-
-        if j % kwargs['gif_save_interval'] == 0 and not kwargs['debug'] and (kwargs['env_name'].startswith("Car") or kwargs['env_name'].startswith("Mini")):
-            img_list = save_gif(actor_critic, kwargs['env_name'], kwargs['seed'],
-                         kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
-                         persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
-                         resolution_scale = kwargs['scale'], image_stack=kwargs['image_stack'],
-                         async_params=[kwargs['obs_interval'], kwargs['predict_interval'], kwargs['no_op']])
-
-            if kwargs['env_name'].startswith("Mini"):
-                wandb.log({"visualization %s" % j: wandb.Image(img_list[0])})
-                wandb.log({"video %s" % j: wandb.Video(img_list[1], fps=4, format="gif")})
-                wandb.log(dict(eval_mean_reward=img_list[-2]))
-                wandb.log(dict(eval_mean_gt=img_list[-1]))
-            else:
-                wandb.log({"video %s" % j: wandb.Video(img_list[0], fps=4, format="gif")})
-                wandb.log(dict(eval_mean_reward=img_list[-2]))
-                wandb.log(dict(eval_mean_gt=img_list[-1]))
-
-        # if not kwargs['debug'] and j % kwargs['gif_save_interval'] == 0:
-        #     success_rate, eval_reward = evaluate_actions(actor_critic, kwargs['env_name'], kwargs['seed'],
-        #                      kwargs['num_processes'], device, j, kwargs['bonus1'], save_dir = eval_log_dir,
-        #                      persistent = kwargs['persistent'], always_zero=kwargs['always_zero'],
-        #                      resolution_scale = kwargs['scale'], image_stack=kwargs['image_stack'])
-        #     wandb.log(dict(success_rate=success_rate))
-        #     wandb.log(dict(eval_mean_reward=eval_reward))
+                wandb.log(log_dict)
+                time_start = time.time()
 
 
 if __name__ == "__main__":
     sweep_params = {
         'algo': 'ppo',
-        'seed': 111,
+        'seed': 222,
         # 'env_name': 'MiniWorld-YMaze-v0',
-        # 'env_name': 'MiniWorld-CollectHealth-v0',
-        # 'env_name': 'CarRacing-v0',
-        # 'env_name': 'SawyerLift',
-        'env_name': 'VizdoomDefendLine-v0',
+        # 'env_name': 'VizdoomDefendCenter-v0',
+        # 'env_name': 'PongNoFrameskip-v4',
+        # 'env_name': 'Pong-v0',
+        # 'env_name': 'Assault-v0',
+        # 'env_name': 'Atlantis-v0',
+        # 'env_name': 'BattleZone-v0',
+        # 'env_name': 'Freeway-v0',
+        'env_name': 'Riverraid-v0',
+
+        # 'env_name': 'VizdoomDefendLine-v0',
         # 'env_name': 'VizdoomHealthGathering-v0',
         # 'env_name': 'FetchReach-v1', 'FetchPickAndPlace-v1', 'FetchPush-v1', 'FetchSlide-v1',
         # 'env_name': 'MiniGrid-MultiRoom-N4-S5-v0',
@@ -356,36 +312,37 @@ if __name__ == "__main__":
         'lr': [2.5e-4, 2.5e-4],
         'clip_param': 0.1,
         'value_loss_coef': 0.5,
-        'num_processes': 16,
-        'num_steps': 512,
+        'num_processes': 8,
+        'num_steps': 128,
         'num_mini_batch': 4,
         'log_interval': 1,
         'use_linear_lr_decay': True,
-        'entropy_coef': 0.005,
+        'entropy_coef': 0.01,
         'num_env_steps': 50000000,
         'bonus1': 0,
         'cuda': True,
-        # 'proj_name': 'async-maze',
-        'proj_name': 'async-vizdoom',
-        # 'proj_name': 'async-car',
+        'proj_name': 'async-atari-base',
+        # 'proj_name': 'async-vizdoom',
+        # 'proj_name': 'async-surreal2',
         # 'proj_name': 'debug',
         'gif_save_interval': 200,
         'note': 'update',
         'debug': False,
         'gate_input': 'hid', #'obs' | 'hid'
-        'persistent': True,
-        'scale': 0.25,
+        'persistent': False,
+        'scale': 1,
         'hidden_size': 128,
-        'always_zero': True,
+        'ops': False,
         'pred_loss': False,
         'image_stack': False,
         'save_dir': '',
         'pred_mode': 'pred_model', #'pred_model' | 'pos_enc'
         'no_bonus': 0,
         'fixed_probability': None,
-        'obs_interval': 3,
+        'obs_interval': 1,
         'predict_interval': 1,
-        'no_op': True,
+        'no_op': False,
+        # 'ppo_epoch': 3
         }
 
     # run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)

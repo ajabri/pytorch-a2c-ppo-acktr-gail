@@ -99,81 +99,106 @@ class TimeStepCounter(gym.Wrapper):
         return obs, rew, done, info
 
 
-
-class AsyncWrapper(gym.Wrapper):
-    def __init__(self, env, obs_interval, predict_interval, no_op=False, no_op_action=None):
-        # missing variables below
-        env.reward_range = None
-        env.metadata = None
-        gym.Wrapper.__init__(self, env)
-        self.obs_interval = obs_interval
-        self.predict_interval = predict_interval
-        assert self.predict_interval == 1 #remove and fix it in the future
-        self.last_action = np.zeros(self.action_space.shape)
-        self.displacement = np.zeros(self.action_space.shape)
-        self.no_op_action = no_op_action
-        self.no_op = no_op
-        self.which_obs = 'first' #TODO: implement it.
-
-    def reset(self):
-        obs = self.env.reset()
-        return obs
-
-    def step(self, action):
-        predict, action = action[0], action[1:]
-        if not predict:
-            curr_action = self.no_op_action if self.no_op else action
-            # time taken to process the last observation. While processing the images, do some no_op 
-            for _ in range(self.obs_interval - 1):
-                self.env.step(curr_action)
-        obs, reward, done, info = self.env.step(action)
-        return obs, reward, done, info
-
-
-class RobotSuiteWrapper(gym.Wrapper):
-    def __init__(self, env):
-        # missing variables below
-        env.reward_range = None
-        env.metadata = None
-        env.action_space = spaces.Box(-np.inf, np.inf, shape=(env.dof,), dtype='float32')
-        env.observation_space = spaces.Box(-np.inf, np.inf, shape=(env.camera_height, env.camera_width, 3), dtype='float32')
-        gym.Wrapper.__init__(self, env)
-
-    def seed(self, seed=None):
-        self.np_random, seed = seeding.np_random(seed)
-        return [seed]
-
-
-    def reset(self):
-        obs = self.env.reset()
-        return obs['image']
-
-    def step(self, action):
-        obs, reward, done, info = self.env.step(action)
-        return obs['image'], reward, done, info
-
-
-
-
-# class MiniWorldWrapper(gym.core.ObservationWrapper):
-#     def __init__(self, env, resolution_scale=1):
-#         obs_height, obs_width = 60, 80
-#         real_obs_height, real_obs_width = int(resolution_scale*obs_height), int(resolution_scale*obs_width)
-#         super().__init__(env, obs_height=real_obs_height, obs_width=real_obs_width)
+# class AsyncWrapper(gym.Wrapper):
+#     def __init__(self, env, obs_interval, predict_interval, no_op=False, no_op_action=None, record_imgs=False):
+#         # missing variables below
+#         env.reward_range = (-float('inf'), float('inf'))
+#         env.metadata = None
+#         gym.Wrapper.__init__(self, env)
+#         self.env = env
+#         self.obs_interval = obs_interval
+#         self.predict_interval = predict_interval
+#         assert self.predict_interval == 1 #remove and fix it in the future
+#         self.no_op_action = no_op_action
+#         self.no_op = no_op
+#         self.which_obs = 'first' #TODO: implement it.
+#         self.action_dim = self.env.action_space.shape
+#         self.img_list = []
+#         self.record_imgs = record_imgs
 #
-#     def observation(self, observation):
-#         return observation
+#     def reset(self):
+#         obs = self.env.reset()
+#         rgb_img = self.env.render(mode='rgb_array')
+#         if self.record_imgs:
+#             self.img_list = [rgb_img]
+#         return obs
+#
+#     def step(self, action):
+#         self.img_list = []
+#         predict, action = action[0], action[1:]
+#         infos, rewards, actions, dones = {}, 0, [], []
+#         if not predict:
+#             no_op = self.no_op_action if self.no_op else action
+#             for _ in range(self.obs_interval - 1):
+#                 actions.append(no_op)
+#         actions.append(action)
+#         for action in actions:
+#             if self.action_dim == ():
+#                 action = action[0]
+#             obs, reward, done, info = self.env.step(action)
+#             if self.record_imgs:
+#                 self.img_list.append(self.env.render(mode='rgb_array'))
+#             rewards += reward
+#             for k in info.keys():
+#                 if k in infos:
+#                     infos[k].append(info[k])
+#                 else:
+#                     infos[k] = [info[k]]
+#             if done:
+#                 break
+#         if self.record_imgs:
+#             if len(self.img_list) > 1:
+#                 self.img_list = [i//2 for i in self.img_list[:-1]] + self.img_list[-1]
+#         return obs, rewards, done, infos
 #
 #     def full_obs(self):
-#         top_down_view = env.render_top_view()
-#         top_down_view2 = top_down_view.copy()
-#         r, g, b = top_down_view[:, :, 0], top_down_view[:, :, 1], top_down_view[:, :, 2]
-#         indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
-#         ratio = 255
-#         top_down_view2[indices] = ratio * np.array([0, 0, 1])
-#         top_down_view[indices] = ratio * np.array([1, 0, 0])
-#
-#         obs = env.render_obs()
-#         obs2 = obs.copy()
-#         obs2[:, :, -1] += 125
-#         return top_down_view2, top_down_view, obs2, obs
+#         rgb_img, rgb_img2 = [], []
+#         for img in self.img_list:
+#             img2 = img.copy() #200x200x3
+#             r, g, b = img2[:, :, 0], img2[:, :, 1], img2[:, :, 2]
+#             indices = np.logical_and(r<155, np.logical_and(g<155, b<155))
+#             img2[indices] = img2[indices] + np.array([0, 0, 100])
+#             rgb_img.append(img)
+#             rgb_img2.append(img2)
+#         return rgb_img2, rgb_img
+
+
+
+
+class AsyncWrapper(gym.Wrapper):
+    def __init__(self, env, obs_interval, predict_interval):
+        if not 'reward_range' in env.__dict__:
+            env.reward_range = (-float('inf'), float('inf'))
+        if not 'metadata' in env.__dict__:
+            env.metadata = None
+        """ pending obs: the state at the step when the agent request an observation
+            last obs: the most recent observation the agent got
+            real state: the real current state
+            NOTE: this wrappe currently only works for those environments
+                  whose observations are imgs
+            TODO: call render to save imgs for other environments. 
+        """
+        gym.Wrapper.__init__(self, env)
+        self.env = env
+        self.obs_interval = obs_interval
+        self.predict_interval = predict_interval
+
+    def reset(self):
+        obs = self.env.reset()
+        self.step_count = 0
+        self.last_obs = np.zeros_like(obs)
+        self.pending_obs = obs
+        self.real_state = obs
+        return self.last_obs
+
+    def step(self, action):
+        obs, reward, done, info = self.env.step(action)
+        self.real_state = obs
+        self.step_count = (self.step_count + 1) % self.obs_interval
+        if self.step_count % self.obs_interval == 0:
+            self.last_obs = self.pending_obs
+            self.pending_obs = obs
+        return self.last_obs, reward, done, info
+
+    def full_obs(self):
+        return self.real_state, self.last_obs
