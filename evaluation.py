@@ -36,8 +36,29 @@ def concat_views(real_state, agent_view):
     border = np.zeros((H, 3, D))
     return np.concatenate((real_state, border, agent_view), axis=1)
 
+
+def slip_channel(rgb_img, decision):
+    rgb_img2 = rgb_img.copy()
+    r, g, b = rgb_img[:, :, 0], rgb_img[:, :, 1], rgb_img[:, :, 2]
+    indices = np.logical_and(r>100, np.logical_and(g>100, b>100))
+    ratio = r[indices].reshape((-1, 1))
+    # ratio = 1
+    rgb_img2[indices] = ratio * np.array([0, 0, 1])
+    rgb_img[indices] = ratio * np.array([1, 0, 0])
+    return rgb_img2 * decision + rgb_img * (1-decision)
+
+def act(actor_critic, obs, eval_recurrent_hidden_states, eval_masks, info=None):
+    with torch.no_grad():
+        _, action, _, eval_recurrent_hidden_states = actor_critic.act(
+            obs,
+            eval_recurrent_hidden_states,
+            eval_masks,
+            deterministic=True,
+            info=info)
+    return action, eval_recurrent_hidden_states
+
 def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
-             device, log_dict, async_params=[1, 1], j=0):
+             device, log_dict, async_params=[1, 1], j=0, ops=False, hidden_size=64):
     """we also need some visualizations. """
     eval_envs = make_vec_envs(env_name, seed + num_processes, num_processes,
                               None, eval_log_dir, device, True, async_params=async_params)
@@ -48,29 +69,34 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
         vec_norm.ob_rms = ob_rms
 
     eval_episode_rewards = []
+    all_decisions = []
 
     obs = eval_envs.reset()
+    act_dim = actor_critic[1].base.act_dim if ops else actor_critic.base.act_dim
     eval_recurrent_hidden_states = torch.zeros(
-        num_processes, actor_critic.recurrent_hidden_state_size, device=device)
+        num_processes, hidden_size, device=device)
     eval_masks = torch.zeros(num_processes, 1, device=device)
 
     eval_views, pairs = [[] for _ in range(num_processes)], [[] for _ in range(num_processes)]
     collected_views, collected_pairs = [], []
     max_size = 50
+    last_action = torch.zeros((num_processes, act_dim)).to(device)
 
     start = time.time()
     while len(eval_episode_rewards) < 4:
-        with torch.no_grad():
-            _, action, _, eval_recurrent_hidden_states = actor_critic.act(
-                obs,
-                eval_recurrent_hidden_states,
-                eval_masks,
-                deterministic=True)
+        if ops:
+            decisions, _ = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
+            action, eval_recurrent_hidden_states = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
+                                                       info=torch.cat([decisions, last_action], dim=1))
+            decisions = decisions.cpu().numpy()
+            last_action = action
+            all_decisions.append(decisions)
+        else:
+            action, eval_recurrent_hidden_states = act(actor_critic, obs, eval_recurrent_hidden_states, eval_masks)
 
         # Obser reward and next obs
         obs, _, done, infos = eval_envs.step(action)
         full_obs = eval_envs.full_obs() #[num_processes, ((210, 160, 3), (210, 160, 3))]
-        decisions = np.zeros((num_processes, 1))
         for (pair, eval_view, full_ob, decision, d, idx, info) in zip(pairs, eval_views, full_obs, decisions, done, range(num_processes), infos):
             if full_ob[0].shape[0] > max_size:
                 scale = 1 / (full_ob[0].shape[0]//max_size)
@@ -79,9 +105,9 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
             else:
                 state, view = full_ob
 
-            real_view = view * (1 - decision) + (view//2) * decision
+            real_view = slip_channel(view, decision)
             if 'episode' in info.keys():
-                pair.append(concat_views(state, real_view))
+                pair.append(concat_views(state, view * (1 - decision) + (view//2) * decision))
                 eval_view.append(real_view)
                 eval_episode_rewards.append(info['episode']['r'])
 
@@ -90,7 +116,7 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
                 pairs[idx] = []
                 eval_views[idx] = []
             elif not d:
-                pair.append(concat_views(state, real_view))
+                pair.append(concat_views(state, view * (1 - decision) + (view//2) * decision))
                 eval_view.append(real_view)
             elif d:
                 # ignore the episodes that failed
@@ -107,7 +133,8 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
     pairs = to_video(collected_pairs)
 
     log_dict['eval_len'] = len(eval_episode_rewards)
-    log_dict['mean_rew'] = np.mean(eval_episode_rewards)
+    log_dict['eval_mean_rew'] = np.mean(eval_episode_rewards)
+    log_dict['eval_mean_gt'] = np.mean(all_decisions)
     log_dict['eval_time'] = time.time() - start
     log_dict["hist " + str(j)] = wandb.Image(imgs)
     log_dict["agent_views " + str(j)] = wandb.Video(pairs, fps=4, format="gif")

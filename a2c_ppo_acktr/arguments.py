@@ -78,6 +78,10 @@ def get_args():
         default=16,
         help='how many training CPU processes to use (default: 16)')
     parser.add_argument(
+        '--hidden-size',
+        type=int,
+        default=512)
+    parser.add_argument(
         '--num-steps',
         type=int,
         default=5,
@@ -171,6 +175,11 @@ def get_args():
         '--pred_interval',
         type=int,
         default=1)
+
+    parser.add_argument(
+        '--note',
+        type=str,
+        default='')
 
     parser.add_argument(
         '--debug',
