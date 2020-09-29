@@ -28,7 +28,7 @@ def main():
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
     # wandb.init(project='atari-base', config = args)
-    wandb.init(project='atari-debug', config = args)
+    wandb.init(project='atari-debug2', config = args)
 
     if args.cuda and torch.cuda.is_available() and args.cuda_deterministic:
         torch.backends.cudnn.benchmark = False
@@ -147,10 +147,11 @@ def main():
                 value2, action, action_log_prob2, recurrent_hidden_states = act(actor_critic[1], step,
                                                         info=torch.cat([decisions, last_action], dim=1))
             else:
+                decisions = torch.zeros((args.num_processes, 1)).to(device)
                 value, action, action_log_prob, recurrent_hidden_states = act(actor_critic, step)
 
             # Obser reward and next obs
-            obs, reward, done, infos = envs.step(action)
+            obs, reward, done, infos = envs.step(torch.cat((decisions, action), dim=-1))
 
             for info in infos:
                 if 'episode' in info.keys():

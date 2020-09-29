@@ -31,10 +31,8 @@ class ObservationOnlyWrapper(gym.core.ObservationWrapper):
         o = obs['observation']
         a = obs['achieved_goal']
         d = obs['desired_goal']
-        # print(o.shape, a.shape, d.shape)
         concatenated = np.concatenate((o, a, d))
         return concatenated
-        # return obs['observation']
 
 class TiledObsWrapper(ImgObsWrapper):
     def __init__(self, env, tile_size = 8):
@@ -107,19 +105,38 @@ class AsyncWrapper(gym.Wrapper):
 
     def reset(self):
         obs = self.env.reset()
+        self.real_state = obs.copy()
+        # directly request observation at the first step
         self.step_count = 0
-        self.last_obs = np.zeros_like(obs)
-        self.pending_obs = obs
-        self.real_state = obs
+        if self.obs_interval == 0:
+            self.last_obs = obs.copy()
+        else:
+            self.pending_obs = obs.copy()
+            self.last_obs = np.zeros_like(obs)
         return self.last_obs
 
     def step(self, action):
+        predict, action = action[0], action[1:]
+        if len(action) == 1:
+            action = action[0]
+
         obs, reward, done, info = self.env.step(action)
-        self.real_state = obs
-        self.step_count = (self.step_count + 1) % self.obs_interval
-        if self.step_count % self.obs_interval == 0:
-            self.last_obs = self.pending_obs
-            self.pending_obs = obs
+        self.real_state = obs.copy()
+        if self.obs_interval == 0:
+            self.last_obs = obs.copy()
+        elif self.step_count == -1:
+            if not predict:
+                self.step_count = 0
+                self.pending_obs = obs
+        else:
+            self.step_count = (self.step_count + 1) % self.obs_interval
+            if self.step_count == 0:
+                self.last_obs = self.pending_obs
+                if predict:
+                    self.step_count = -1
+                else:
+                    self.pending_obs = obs
+
         return self.last_obs, reward, done, info
 
     def full_obs(self):
