@@ -84,84 +84,6 @@ class ResizeObservation(ObservationWrapper):
         rgb_img2 = rgb_img2//4
         return rgb_img2, rgb_img
 
-class TimeStepCounter(gym.Wrapper):
-    def __init__(self, env):
-        super(TimeStepCounter, self).__init__(env)
-
-    def reset(self):
-        self.step_index = 0
-        return self.env.reset()
-
-    def step(self, action):
-        obs, rew, done, info = self.env.step(action)
-        info['step_index'] = self.step_index
-        self.step_index += 1
-        return obs, rew, done, info
-
-
-# class AsyncWrapper(gym.Wrapper):
-#     def __init__(self, env, obs_interval, predict_interval, no_op=False, no_op_action=None, record_imgs=False):
-#         # missing variables below
-#         env.reward_range = (-float('inf'), float('inf'))
-#         env.metadata = None
-#         gym.Wrapper.__init__(self, env)
-#         self.env = env
-#         self.obs_interval = obs_interval
-#         self.predict_interval = predict_interval
-#         assert self.predict_interval == 1 #remove and fix it in the future
-#         self.no_op_action = no_op_action
-#         self.no_op = no_op
-#         self.which_obs = 'first' #TODO: implement it.
-#         self.action_dim = self.env.action_space.shape
-#         self.img_list = []
-#         self.record_imgs = record_imgs
-#
-#     def reset(self):
-#         obs = self.env.reset()
-#         rgb_img = self.env.render(mode='rgb_array')
-#         if self.record_imgs:
-#             self.img_list = [rgb_img]
-#         return obs
-#
-#     def step(self, action):
-#         self.img_list = []
-#         predict, action = action[0], action[1:]
-#         infos, rewards, actions, dones = {}, 0, [], []
-#         if not predict:
-#             no_op = self.no_op_action if self.no_op else action
-#             for _ in range(self.obs_interval - 1):
-#                 actions.append(no_op)
-#         actions.append(action)
-#         for action in actions:
-#             if self.action_dim == ():
-#                 action = action[0]
-#             obs, reward, done, info = self.env.step(action)
-#             if self.record_imgs:
-#                 self.img_list.append(self.env.render(mode='rgb_array'))
-#             rewards += reward
-#             for k in info.keys():
-#                 if k in infos:
-#                     infos[k].append(info[k])
-#                 else:
-#                     infos[k] = [info[k]]
-#             if done:
-#                 break
-#         if self.record_imgs:
-#             if len(self.img_list) > 1:
-#                 self.img_list = [i//2 for i in self.img_list[:-1]] + self.img_list[-1]
-#         return obs, rewards, done, infos
-#
-#     def full_obs(self):
-#         rgb_img, rgb_img2 = [], []
-#         for img in self.img_list:
-#             img2 = img.copy() #200x200x3
-#             r, g, b = img2[:, :, 0], img2[:, :, 1], img2[:, :, 2]
-#             indices = np.logical_and(r<155, np.logical_and(g<155, b<155))
-#             img2[indices] = img2[indices] + np.array([0, 0, 100])
-#             rgb_img.append(img)
-#             rgb_img2.append(img2)
-#         return rgb_img2, rgb_img
-
 
 
 
@@ -176,7 +98,7 @@ class AsyncWrapper(gym.Wrapper):
             real state: the real current state
             NOTE: this wrappe currently only works for those environments
                   whose observations are imgs
-            TODO: call render to save imgs for other environments. 
+            TODO: call render to save imgs for other environments.
         """
         gym.Wrapper.__init__(self, env)
         self.env = env

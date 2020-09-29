@@ -27,7 +27,8 @@ def main():
 
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
-    wandb.init(project='atari-base', config = args)
+    # wandb.init(project='atari-base', config = args)
+    wandb.init(project='atari-debug', config = args)
 
     if args.cuda and torch.cuda.is_available() and args.cuda_deterministic:
         torch.backends.cudnn.benchmark = False
@@ -39,7 +40,7 @@ def main():
     utils.cleanup_log_dir(eval_log_dir)
 
     torch.set_num_threads(1)
-    device = torch.device("cuda:0" if args.cuda else "cpu")
+    device = torch.device("cuda:6" if args.cuda else "cpu")
     async_params = [args.obs_interval, args.pred_interval]
 
     envs = make_vec_envs(args.env_name, args.seed, args.num_processes,
@@ -51,7 +52,7 @@ def main():
         if is_leaf:
             obs_shape = envs.observation_space.shape
             action_shape = envs.action_space
-            act_dim = 1 if discrete_action else envs.action_space.shape[0]
+            act_dim = envs.action_space.n
         else:
             obs_shape = (args.hidden_size,)
             action_shape = gym.spaces.Discrete(2)

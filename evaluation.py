@@ -72,7 +72,7 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
     all_decisions = []
 
     obs = eval_envs.reset()
-    act_dim = actor_critic[1].base.act_dim if ops else actor_critic.base.act_dim
+    act_dim = 1
     eval_recurrent_hidden_states = torch.zeros(
         num_processes, hidden_size, device=device)
     eval_masks = torch.zeros(num_processes, 1, device=device)
