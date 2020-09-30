@@ -154,17 +154,21 @@ def get_args():
         default=False,
         help='use a linear schedule on the learning rate')
 
-    # parser.add_argument(
-    #     '--bonus1',
-    #     type=float,
-    #     default=0.0,
-    #     help='coefficient for bonus reward')
+    parser.add_argument(
+        '--keep-vis',
+        action='store_true',
+        default=False)
 
     parser.add_argument(
         '--bonus1',
         type=float,
         default=0.0,
         help='coefficient for bonus reward')
+
+    parser.add_argument(
+        '--no-bonus',
+        type=int,
+        default=0)
 
     parser.add_argument(
         '--obs-interval',

@@ -24,7 +24,7 @@ from experiment_utils.run_sweep import run_sweep
 from evaluation import evaluate
 
 INSTANCE_TYPE = 'c4.xlarge'
-EXP_NAME = 'async/mujoco-test-wrapper'
+EXP_NAME = 'async/mujoco-test-wrapper-bonus'
 
 def main(**kwargs):
     args = get_args()
@@ -174,8 +174,12 @@ def main(**kwargs):
                  for info in infos])
 
             if kwargs['ops']:
+                if j >= kwargs['no_bonus']:
+                    scaled_rew = decisions * kwargs['bonus1'] + reward
+                else:
+                    scaled_rew = reward
                 rollouts.insert(obs, recurrent_hidden_states, action,
-                                [action_log_prob1, action_log_prob2], [value1, value1], reward, masks, bad_masks,
+                                [action_log_prob1, action_log_prob2], [value1, value1], [scaled_rew, reward], masks, bad_masks,
                                 infos=last_action, decisions=decisions, ops=True)
             else:
                 rollouts.insert(obs, recurrent_hidden_states, action,
@@ -198,24 +202,6 @@ def main(**kwargs):
         rollouts.after_update()
 
         log_dict = {}
-
-        # if (j % kwargs['save_interval'] == 0 or j == num_updates - 1) and log_dir != "":
-        #     save_path = log_dir
-        #     try:
-        #         os.makedirs(save_path)
-        #     except OSError:
-        #         pass
-        #     if kwargs['ops']:
-        #         torch.save([
-        #             actor_critic,
-        #             getattr(utils.get_vec_normalize(envs), 'ob_rms', None)
-        #         ], os.path.join(save_path, kwargs['env_name'] + str(j) +".pt"))
-        #     else:
-        #         torch.save([
-        #             actor_critic[0],
-        #             actor_critic[1],
-        #             getattr(utils.get_vec_normalize(envs), 'ob_rms', None)
-        #         ], os.path.join(save_path, kwargs['env_name'] + str(j) +".pt"))
 
         if j % kwargs['log_interval'] == 0 and len(episode_rewards) > 1:
             total_num_steps = (j + 1) * kwargs['num_processes'] * kwargs['num_steps']
@@ -274,9 +260,11 @@ if __name__ == "__main__":
         'proj_name': ['wrapper-debug'],
         'note': [''],
         'hidden_size': [64],
-        'ops': [True, False],
+        'bonus1': [0.01, 0.1, 1, 2, 5],
+        'no_bonus': [0, 50],
+        'ops': [True],
         'eval_interval': [5],
-        'obs_interval': [0, 1, 2, 3, 5, 8],
+        'obs_interval': [0],
         'ppo_epoch': [10],
         'gae_lambda': [0.95],
         'use_proper_time_limits': [True],

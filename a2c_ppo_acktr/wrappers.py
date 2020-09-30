@@ -174,7 +174,7 @@ class AsyncWrapper(gym.Wrapper):
                 elif self.step_count == 0:
                         self.last_vis = self.pending_vis
                         if not predict:
-                            self.pending_obs = self.real_vis.copy()
+                            self.pending_vis = self.real_vis.copy()
 
         return self.last_obs, reward, done, info
 
