@@ -256,8 +256,6 @@ class OpsPolicy(nn.Module):
         else:
             raise NotImplementedError
 
-        # self.gate_dist = Categorical(self.base.output_size, 3)
-
     @property
     def is_recurrent(self):
         return self.base.is_recurrent
@@ -314,8 +312,6 @@ class OpsPolicy(nn.Module):
         for i in range(len(has_zeros) - 1):
             start_idx = has_zeros[i]
             end_idx = has_zeros[i + 1]
-            # all_hxs.append(torch.zeros((1, dim)).to(device)) #the first step has no memory
-            # all_hxs.append(hxs[start_idx+1:end_idx])
             all_hxs.append(hxs[start_idx:end_idx])
 
         all_hxs = torch.cat(all_hxs, dim=0)
@@ -335,31 +331,6 @@ class Dynamics(nn.Module):
 
     def forward(self, x, a):
         return self.model(torch.cat([x, a], dim=-1))
-
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, dropout=0.1, max_len=5000):
-        import math
-        super(PositionalEncoding, self).__init__()
-        self.dropout = nn.Dropout(p=dropout)
-
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        self.pe = pe
-        # pe = pe.unsqueeze(0).transpose(0, 1)
-        # self.register_buffer('pe', pe)
-
-    def forward(self, x, step_indices):
-        if step_indices.is_cuda:
-            indices = step_indices.data.cpu().numpy().astype(int)
-            x = x + (self.pe[indices]).to(x.get_device())
-        else:
-            indices = step_indices.data.numpy().astype(int)
-            x = x + self.pe[indices]
-        return self.dropout(x)
-        # return x
 
 
 class OpsCell(nn.Module):
@@ -393,7 +364,7 @@ class OpsCell(nn.Module):
             elif 'weight' in name:
                 nn.init.orthogonal_(param)
 
-    def forward(self, x, h, g, a, step_indices, full_hidden = False):
+    def forward(self, x, h, g, a, full_hidden = False):
         # B x T x I
         # B x T x H
         # also keep another hidden state, so make h' = [h, h_persistent]
@@ -410,10 +381,7 @@ class OpsCell(nn.Module):
         for t in range(g.shape[0]):
             if self.persistent:
                 z1 = self.capture(torch.cat((x[t], h2[0]), dim = -1)) #2 * hidden_size
-                if self.pred_mode == 'pred_model':
-                    z2 = self.predict(torch.cat((h1[0], h2[0]), dim = -1), a[t]) #2 * hidden_size
-                # elif self.pred_mode == 'pos_enc':
-                #     z2 = self.predict(torch.cat((h1[0], h2[0]), dim = -1), step_indices[t])
+                z2 = self.predict(torch.cat((h1[0], h2[0]), dim = -1), a[t]) #2 * hidden_size
 
                 z1_1, z1_2 = torch.chunk(z1, 2, dim = -1)
                 z2_1, z2_2 = torch.chunk(z2, 2, dim = -1)
@@ -540,10 +508,9 @@ class OpsBase(NNBase):
                 if not self.is_leaf:
                     x = x.detach()
 
-        if info is not None and info[0].numel() > 0: #2
-            assert len(info[0].shape) == 2
-            g, a = info[0][:, 0].unsqueeze(dim=-1), info[0][:, 1:]
-            step_indices = info[1]
+        if info is not None and info.numel() > 0: #2
+            assert len(info.shape) == 2
+            g, a = info[:, 0].unsqueeze(dim=-1), info[:, 1:]
             if self.fixed_probability != None:
                 g = torch.cat([self.bernoulli.sample() for _ in range(g.shape[0])]).unsqueeze(dim=-1).to(g.get_device())
             if self.discrete_action:
@@ -552,7 +519,7 @@ class OpsBase(NNBase):
             else:
                 a = self.act_emb(a)
 
-            x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks, g, a, step_indices)
+            x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks, g, a)
 
             hidden_critic = self.critic(x)
             hidden_actor = self.actor(x)
@@ -570,14 +537,13 @@ class OpsBase(NNBase):
 
 
 
-    def _forward_gru(self, x, hxs, masks, gate, action, step_indices):
+    def _forward_gru(self, x, hxs, masks, gate, action):
         if x.size(0) == hxs.size(0):
             x, hxs, capt = self.cell(
                 x.unsqueeze(0),
                 (hxs * masks).unsqueeze(0),
                 (gate * masks).unsqueeze(0),
-                (action * masks).unsqueeze(0),
-                step_indices)
+                (action * masks).unsqueeze(0))
 
             x = x.squeeze(0)
             hxs = hxs.squeeze(0)
@@ -594,7 +560,6 @@ class OpsBase(NNBase):
 
             # Same deal with masks
             masks = masks.view(T, N)
-            step_indices = step_indices.view(T, N)
 
             # Let's figure out which steps in the sequence have a zero for any agent
             # We will always assume t=0 has a zero in it as that makes the logic cleaner
@@ -629,8 +594,7 @@ class OpsBase(NNBase):
                     x[start_idx:end_idx],
                     hxs * masks[start_idx].view(1, -1, 1), # [1, 4, 256]
                     gate[start_idx:end_idx] * masks[start_idx:end_idx, ..., None],
-                    action[start_idx:end_idx] * masks[start_idx:end_idx, ..., None],
-                    step_indices[start_idx:end_idx])
+                    action[start_idx:end_idx] * masks[start_idx:end_idx, ..., None])
 
                 outputs.append(rnn_scores)
                 capts.append(capt)

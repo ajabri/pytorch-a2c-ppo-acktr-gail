@@ -39,7 +39,6 @@ def visualize_episode(actor_critic,
 
     eval_episode_rewards = []
     obs = eval_envs.reset()
-    step_indices = torch.from_numpy(np.array([0 for _ in range(num_processes)])).to(device)
 
     recurrent_hidden_size = actor_critic[0].recurrent_hidden_state_size * 2 if persistent else actor_critic[0].recurrent_hidden_state_size
 
@@ -70,13 +69,12 @@ def visualize_episode(actor_critic,
             action1 = action1.float()
 
         value2, action2, action_log_prob2, recurrent_hidden_states2 = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
-            info=[torch.cat([action1, last_action], dim=1), step_indices])
+            info=torch.cat([action1, last_action], dim=1))
 
         action = action2
         eval_recurrent_hidden_states = recurrent_hidden_states2
 
         obs, reward, done, infos = eval_envs.step(torch.cat((action1, action), dim=-1))
-        step_indices = torch.from_numpy(np.array([info['step_index'] for info in infos])).to(device)
 
         imgs = eval_envs.full_obs()
         if action1.shape[-1] > 1:
@@ -126,8 +124,6 @@ def visualize_episode(actor_critic,
             r, done = i, columns[idx]
             path = np.array(all_paths[r])
             total.append(path[:done+1])
-        # else:
-        #     total.append(np.array(all_paths[i]))
         H, W, D = imgs[0][0][0].shape
         total.append(np.zeros((3, H, W, D)))
 

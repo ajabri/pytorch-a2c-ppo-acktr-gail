@@ -89,8 +89,6 @@ class PPO():
                  dist_entropy * self.entropy_coef
 
                 if pred_loss: #only for pi_2
-                    infos_batch = infos_batch[0]
-                    assert len(infos_batch.shape) == 2
                     gate = infos_batch[:, 0].unsqueeze(dim=-1)
                     # gate, _ = torch.split(infos_batch, 1, dim=-1)
                     gate = gate.squeeze().bool()

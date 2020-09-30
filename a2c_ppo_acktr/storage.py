@@ -24,7 +24,7 @@ class RolloutStorage(object):
             self.actions = self.actions.long() - 1
         self.masks = torch.ones(num_steps + 1, num_processes, 1)
 
-        self.info = [torch.zeros(num_steps, num_processes, info_size), torch.zeros(num_steps, num_processes)]
+        self.info = torch.zeros(num_steps, num_processes, info_size)
 
         # Masks that indicate whether it's a true terminal state
         # or time limit end state
@@ -32,7 +32,6 @@ class RolloutStorage(object):
 
         self.num_steps = num_steps
         self.step = 0
-        self.is_leaf = (info_size != 0)
 
     def to(self, device):
         self.obs = self.obs
@@ -44,8 +43,7 @@ class RolloutStorage(object):
         self.actions = self.actions.to(device)
         self.masks = self.masks.to(device)
         self.bad_masks = self.bad_masks.to(device)
-        # self.info = self.info.to(device)
-        self.info = [info.to(device) for info in self.info]
+        self.info = self.info.to(device)
 
     def insert(self, obs, recurrent_hidden_states, actions, action_log_probs,
                value_preds, rewards, masks, bad_masks, infos):
@@ -60,35 +58,28 @@ class RolloutStorage(object):
         self.bad_masks[self.step + 1].copy_(bad_masks)
 
         if infos is not None:
-            self.info[0][self.step].copy_(infos[0])
-            self.info[1][self.step].copy_(infos[1])
+            self.info[self.step].copy_(infos)
 
         self.step = (self.step + 1) % self.num_steps
 
-    def insert_single(self, obs, recurrent_hidden_states, actions, action_log_probs,
-               value_preds, rewards, masks, bad_masks, idx):
-        self.obs[self.step + 1][idx].copy_(obs)
-        self.recurrent_hidden_states[self.step + 1][idx].copy_(recurrent_hidden_states)
-        self.actions[self.step][idx].copy_(actions)
-        self.action_log_probs[self.step][idx].copy_(action_log_probs)
-        self.value_preds[self.step][idx].copy_(value_preds)
-        self.rewards[self.step][idx].copy_(rewards)
-        self.masks[self.step + 1][idx].copy_(masks)
-        self.bad_masks[self.step + 1][idx].copy_(bad_masks)
-
-        self.step = (self.step + 1) % self.num_steps
-
-    def set_bad_transitions(self, epi, device):
-        while self.step < self.num_steps and self.step > 0:
-            self.bad_masks[self.step+1][epi].copy_(torch.FloatTensor([1.0]).to(device).reshape((-1)))
-            self.step = (self.step + 1) % self.num_steps
+    # def insert_single(self, obs, recurrent_hidden_states, actions, action_log_probs,
+    #            value_preds, rewards, masks, bad_masks, idx):
+    #     self.obs[self.step + 1][idx].copy_(obs)
+    #     self.recurrent_hidden_states[self.step + 1][idx].copy_(recurrent_hidden_states)
+    #     self.actions[self.step][idx].copy_(actions)
+    #     self.action_log_probs[self.step][idx].copy_(action_log_probs)
+    #     self.value_preds[self.step][idx].copy_(value_preds)
+    #     self.rewards[self.step][idx].copy_(rewards)
+    #     self.masks[self.step + 1][idx].copy_(masks)
+    #     self.bad_masks[self.step + 1][idx].copy_(bad_masks)
+    #
+    #     self.step = (self.step + 1) % self.num_steps
 
     def after_update(self):
         self.obs[0].copy_(self.obs[-1])
         self.recurrent_hidden_states[0].copy_(self.recurrent_hidden_states[-1])
         self.masks[0].copy_(self.masks[-1])
         self.bad_masks[0].copy_(self.bad_masks[-1])
-
         # self.info[0].copy_(self.info[-1])
 
     def compute_returns(self,
@@ -188,7 +179,7 @@ class RolloutStorage(object):
             value_preds_batch = []
             return_batch = []
             masks_batch = []
-            infos_batch = [[], []]
+            infos_batch = []
             old_action_log_probs_batch = []
             adv_targ = []
 
@@ -204,8 +195,7 @@ class RolloutStorage(object):
                     self.recurrent_hidden_states[0:1, ind])
 
                 actions_batch.append(self.actions[:, ind])
-                infos_batch[0].append(self.info[0][:, ind])
-                infos_batch[1].append(self.info[1][:, ind])
+                infos_batch.append(self.info[:, ind])
 
                 value_preds_batch.append(self.value_preds[:-1, ind])
                 return_batch.append(self.returns[:-1, ind])
@@ -219,7 +209,7 @@ class RolloutStorage(object):
             # These are all tensors of size (T, N, -1)
             obs_batch = torch.stack(obs_batch, 1)
             actions_batch = torch.stack(actions_batch, 1)
-            infos_batch = [torch.stack(info_batch, 1) for info_batch in infos_batch]
+            infos_batch = torch.stack(infos_batch, 1)
 
             value_preds_batch = torch.stack(value_preds_batch, 1)
             return_batch = torch.stack(return_batch, 1)
@@ -241,7 +231,7 @@ class RolloutStorage(object):
             # Flatten the (T, N, ...) tensors to (T * N, ...)
             obs_batch = _flatten_helper(T, N, obs_batch)
             actions_batch = _flatten_helper(T, N, actions_batch)
-            infos_batch = [_flatten_helper(T, N, info_batch) for info_batch in infos_batch]
+            infos_batch = _flatten_helper(T, N, infos_batch)
 
             value_preds_batch = _flatten_helper(T, N, value_preds_batch)
             return_batch = _flatten_helper(T, N, return_batch)
@@ -253,9 +243,5 @@ class RolloutStorage(object):
 
             num_samples = obs_batch.shape[0]
 
-            if self.is_leaf:
-                yield obs_batch, recurrent_hidden_states_batch, actions_batch, infos_batch, \
-                    value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ, full_recurrent_hidden_states_batch
-            else:
-                yield obs_batch, recurrent_hidden_states_batch, actions_batch, None, \
-                    value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ, full_recurrent_hidden_states_batch
+            yield obs_batch, recurrent_hidden_states_batch, actions_batch, infos_batch, \
+                value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ, full_recurrent_hidden_states_batch
