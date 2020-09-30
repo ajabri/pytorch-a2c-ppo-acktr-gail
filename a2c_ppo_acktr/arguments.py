@@ -204,7 +204,7 @@ def get_args():
 
     parser.add_argument(
         '--gate-input',
-        default='obs',
+        default='hid',
         help='obs | hid')
 
     args = parser.parse_args()
