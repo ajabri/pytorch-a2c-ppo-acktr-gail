@@ -169,7 +169,7 @@ def get_args():
     parser.add_argument(
         '--obs-interval',
         type=int,
-        default=1)
+        default=0)
 
     parser.add_argument(
         '--pred_interval',

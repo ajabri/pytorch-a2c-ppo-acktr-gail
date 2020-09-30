@@ -71,9 +71,23 @@ class Policy(nn.Module):
 
         return value, action_log_probs, dist_entropy, rnn_hxs
 
+class Dynamics(nn.Module):
+    def __init__(self, obs_dim, act_dim, hidden_size=64):
+        super(Dynamics, self).__init__()
+        init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
+                               constant_(x, 0), nn.init.calculate_gain('relu'))
+
+        self.model = nn.Sequential(
+            init_(nn.Linear(obs_dim + act_dim, hidden_size)), nn.ReLU(),
+            init_(nn.Linear(hidden_size, hidden_size)), nn.ReLU()
+        )
+
+    def forward(self, x, a):
+        return self.model(torch.cat([x, a], dim=-1))
 
 class NNBase(nn.Module):
-    def __init__(self, recurrent, recurrent_input_size, hidden_size, is_leaf, ops, act_dim):
+    def __init__(self, recurrent, recurrent_input_size,
+                       hidden_size, is_leaf, ops, act_dim, discrete_action):
         super(NNBase, self).__init__()
 
         self._hidden_size = hidden_size
@@ -81,6 +95,13 @@ class NNBase(nn.Module):
         self.is_leaf = is_leaf
         self.ops = ops
         self.act_dim = act_dim
+        self.discrete_action = discrete_action
+
+        if ops:
+            assert act_dim != None
+            if self.discrete_action:
+                self.act_emb = nn.Embedding(act_dim + 1, hidden_size, padding_idx=0)
+            self.predict = Dynamics(obs_dim=hidden_size, act_dim=hidden_size, hidden_size=hidden_size)
 
     @property
     def is_recurrent(self):
@@ -97,23 +118,11 @@ class NNBase(nn.Module):
         return self._hidden_size
 
 
-class Dynamics(nn.Module):
-    def __init__(self, obs_dim, act_dim, hidden_size=64):
-        super(Dynamics, self).__init__()
-        init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
-                               constant_(x, 0), nn.init.calculate_gain('relu'))
-
-        self.model = nn.Sequential(
-            init_(nn.Linear(obs_dim + act_dim, hidden_size)), nn.ReLU(),
-            init_(nn.Linear(hidden_size, hidden_size)), nn.ReLU()
-        )
-
-    def forward(self, x, a):
-        return self.model(torch.cat([x, a], dim=-1))
-
 class CNNBase(NNBase):
-    def __init__(self, num_inputs, recurrent=False, hidden_size=512, is_leaf=True, ops=False, act_dim=None):
-        super(CNNBase, self).__init__(recurrent, hidden_size, hidden_size, is_leaf, ops, act_dim)
+    def __init__(self, num_inputs, recurrent=False,
+                       hidden_size=512, is_leaf=True, ops=False, act_dim=None,
+                       discrete_action=False):
+        super(CNNBase, self).__init__(recurrent, hidden_size, hidden_size, is_leaf, ops, act_dim, discrete_action)
 
         init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
                                constant_(x, 0), nn.init.calculate_gain('relu'))
@@ -123,11 +132,6 @@ class CNNBase(NNBase):
             init_(nn.Conv2d(32, 64, 4, stride=2)), nn.ReLU(),
             init_(nn.Conv2d(64, 32, 3, stride=1)), nn.ReLU(), Flatten(),
             init_(nn.Linear(32 * 7 * 7, hidden_size)), nn.ReLU())
-
-        if ops:
-            assert act_dim != None
-            self.act_emb = nn.Embedding(act_dim + 1, hidden_size, padding_idx=0)
-            self.predict = Dynamics(obs_dim=hidden_size, act_dim=hidden_size, hidden_size=hidden_size)
 
         init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
                                constant_(x, 0))
@@ -140,15 +144,20 @@ class CNNBase(NNBase):
         gate, last_a = info[:, 0].unsqueeze(dim=-1), info[:, 1:]
         gate = 0
         z1 = self.capture(inputs / 255.0)
-        z2 = self.predict(rnn_hxs, self.act_emb(last_a.squeeze(-1).long()))
-        z = (1 - gate) * z1 + z2 * gate
+        if self.ops:
+            z2 = self.predict(rnn_hxs, self.act_emb(last_a.squeeze(-1).long()))
+            z = (1 - gate) * z1 + z2 * gate
+        else:
+            z = z1
 
         return self.critic_linear(z), z, rnn_hxs
 
 
 class MLPBase(NNBase):
-    def __init__(self, num_inputs, recurrent=False, hidden_size=64, is_leaf=True, ops=False, act_dim=None):
-        super(MLPBase, self).__init__(recurrent, num_inputs, hidden_size, is_leaf, ops, act_dim)
+    def __init__(self, num_inputs, recurrent=False,
+                       hidden_size=64, is_leaf=True, ops=False, act_dim=None,
+                       discrete_action=False):
+        super(MLPBase, self).__init__(recurrent, num_inputs, hidden_size, is_leaf, ops, act_dim, discrete_action)
 
         if recurrent:
             num_inputs = hidden_size
@@ -173,6 +182,12 @@ class MLPBase(NNBase):
             x = inputs
         else:
             x = rnn_hxs
+
+        if self.ops:
+            assert info!=None
+            gate, last_a = info[:, 0].unsqueeze(dim=-1), info[:, 1:]
+            z2 = self.predict(rnn_hxs, self.act_emb(last_a.squeeze(-1).long()))
+            x = (1 - gate) * z1 + z2 * gate
 
         hidden_critic = self.critic(x)
         hidden_actor = self.actor(x)

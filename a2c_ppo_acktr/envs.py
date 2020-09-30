@@ -32,7 +32,7 @@ except ImportError:
 
 
 def make_env(env_id, seed, rank, log_dir, allow_early_resets,
-             async_params=[1, 1], scale=1):
+             async_params=[1, 1], scale=1, keep_vis=False):
     def _thunk():
         if env_id.startswith("dm"):
             _, domain, task = env_id.split('.')
@@ -57,7 +57,7 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets,
                 allow_early_resets=allow_early_resets)
 
         obs_interval, pred_interval = async_params
-        env = AsyncWrapper(env, obs_interval, pred_interval)
+        env = AsyncWrapper(env, obs_interval, pred_interval, keep_vis=keep_vis)
 
         if is_atari:
             if len(env.observation_space.shape) == 3:
@@ -89,10 +89,11 @@ def make_vec_envs(env_name,
                   allow_early_resets,
                   num_frame_stack=None,
                   async_params=[1, 1],
-                  scale=1.):
+                  scale=1.,
+                  keep_vis=False):
     envs = [
         make_env(env_name, seed, i, log_dir, allow_early_resets,
-                 async_params=async_params, scale=scale)
+                 async_params=async_params, scale=scale, keep_vis=keep_vis)
         for i in range(num_processes)
     ]
 

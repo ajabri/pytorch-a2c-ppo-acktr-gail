@@ -86,7 +86,7 @@ class ResizeObservation(ObservationWrapper):
 
 
 class AsyncWrapper(gym.Wrapper):
-    def __init__(self, env, obs_interval, predict_interval):
+    def __init__(self, env, obs_interval, predict_interval, keep_vis=False):
         if not 'reward_range' in env.__dict__:
             env.reward_range = (-float('inf'), float('inf'))
         if not 'metadata' in env.__dict__:
@@ -102,10 +102,10 @@ class AsyncWrapper(gym.Wrapper):
         self.env = env
         self.obs_interval = obs_interval
         self.predict_interval = predict_interval
+        self.keep_vis = keep_vis
 
     def reset(self):
         obs = self.env.reset()
-        self.real_state = obs.copy()
         # directly request observation at the first step
         self.step_count = 0
         if self.obs_interval == 0:
@@ -113,6 +113,21 @@ class AsyncWrapper(gym.Wrapper):
         else:
             self.pending_obs = obs.copy()
             self.last_obs = np.zeros_like(obs)
+
+        if self.keep_vis:
+            if len(obs.shape) == 3:
+                if self.obs_interval == 0:
+                    self.last_vis = obs.copy()
+                else:
+                    self.last_vis = np.zeros_like(obs) #no memory
+                self.real_vis = obs.copy()
+            else:
+                self.real_vis = self.render(mode='rgb_array')
+                if self.obs_interval == 0:
+                    self.last_vis = self.real_vis.copy()
+                else:
+                    self.last_vis = np.zeros_like(self.render(mode='rgb_array'))
+
         return self.last_obs
 
     def step(self, action):
@@ -121,13 +136,12 @@ class AsyncWrapper(gym.Wrapper):
             action = action[0]
 
         obs, reward, done, info = self.env.step(action)
-        self.real_state = obs.copy()
         if self.obs_interval == 0:
             self.last_obs = obs.copy()
         elif self.step_count == -1:
             if not predict:
                 self.step_count = 0
-                self.pending_obs = obs
+                self.pending_obs = obs.copy()
         else:
             self.step_count = (self.step_count + 1) % self.obs_interval
             if self.step_count == 0:
@@ -135,9 +149,34 @@ class AsyncWrapper(gym.Wrapper):
                 if predict:
                     self.step_count = -1
                 else:
-                    self.pending_obs = obs
+                    self.pending_obs = obs.copy()
+
+        if self.keep_vis:
+            if len(obs.shape) == 3:
+                self.real_vis = obs.copy()
+                if self.obs_interval == 0:
+                    self.last_vis = obs.copy()
+                elif self.step_count == -1:
+                    if not predict:
+                        self.pending_vis = obs.copy()
+                elif self.step_count == 0:
+                        self.last_vis = self.pending_vis
+                        if not predict:
+                            self.pending_obs = obs.copy()
+            else:
+                self.real_vis = self.render(mode='rgb_array')
+                if self.obs_interval == 0:
+                    self.last_vis = self.real_vis
+                elif self.step_count == -1:
+                    if not predict:
+                        self.pending_vis = self.real_vis.copy()
+                elif self.step_count == 0:
+                        self.last_vis = self.pending_vis
+                        if not predict:
+                            self.pending_obs = self.real_vis.copy()
 
         return self.last_obs, reward, done, info
 
     def full_obs(self):
-        return self.real_state, self.last_obs
+        assert self.keep_vis
+        return self.real_vis, self.last_vis

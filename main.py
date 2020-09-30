@@ -52,7 +52,7 @@ def main():
         if is_leaf:
             obs_shape = envs.observation_space.shape
             action_shape = envs.action_space
-            act_dim = envs.action_space.n
+            act_dim = envs.action_space.n if discrete_action else envs.observation_space.shape[0]
         else:
             obs_shape = (args.hidden_size,)
             action_shape = gym.spaces.Discrete(2)
@@ -65,7 +65,8 @@ def main():
                          'hidden_size': args.hidden_size,
                          'is_leaf': is_leaf,
                          'ops': args.ops,
-                         'act_dim': act_dim})
+                         'act_dim': act_dim,
+                         'discrete_action': discrete_action})
         actor_critic.to(device)
 
         agent = algo.PPO(
@@ -147,7 +148,11 @@ def main():
                 value2, action, action_log_prob2, recurrent_hidden_states = act(actor_critic[1], step,
                                                         info=torch.cat([decisions, last_action], dim=1))
             else:
-                decisions = torch.zeros((args.num_processes, 1)).to(device)
+                if discrete_action:
+                    decisions = torch.zeros((args.num_processes, 1)).to(device).int()
+                else:
+                    decisions = torch.zeros((args.num_processes, 1)).to(device)
+
                 value, action, action_log_prob, recurrent_hidden_states = act(actor_critic, step)
 
             # Obser reward and next obs
@@ -170,7 +175,7 @@ def main():
                                 infos=last_action, decisions=decisions, ops=True)
             else:
                 rollouts.insert(obs, recurrent_hidden_states, action,
-                                action_log_prob, value, reward, masks, bad_masks)
+                                action_log_prob, value, reward, masks, bad_masks, infos=None, decisions=None)
 
         if args.ops:
             next_value = [get_next_value(actor_critic[0]), get_next_value(actor_critic[1])]

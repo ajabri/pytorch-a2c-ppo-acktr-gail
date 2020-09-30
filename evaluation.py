@@ -53,7 +53,8 @@ def act(actor_critic, obs, eval_recurrent_hidden_states, eval_masks, info=None):
             obs,
             eval_recurrent_hidden_states,
             eval_masks,
-            deterministic=True,
+            # deterministic=True,
+            deterministic=False,
             info=info)
     return action, eval_recurrent_hidden_states
 
@@ -61,12 +62,13 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
              device, log_dict, async_params=[1, 1], j=0, ops=False, hidden_size=64):
     eval_envs = make_vec_envs(env_name, seed + num_processes, num_processes,
                               None, eval_log_dir, device, True,
-                              async_params=async_params)
+                              async_params=async_params, keep_vis=True)
 
     vec_norm = utils.get_vec_normalize(eval_envs)
     if vec_norm is not None:
         vec_norm.eval()
         vec_norm.ob_rms = ob_rms
+    discrete_action = eval_envs.action_space.__class__.__name__ == "Discrete"
 
     eval_episode_rewards = []
     all_decisions = []
@@ -90,7 +92,10 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
                                                        info=torch.cat([decisions, last_action], dim=1))
             last_action = action
         else:
-            decisions = torch.zeros((num_processes, 1)).to(device)
+            if discrete_action:
+                decisions = torch.zeros((num_processes, 1)).to(device).int()
+            else:
+                decisions = torch.zeros((num_processes, 1)).to(device)
             action, eval_recurrent_hidden_states = act(actor_critic, obs, eval_recurrent_hidden_states, eval_masks)
 
         # Obser reward and next obs
