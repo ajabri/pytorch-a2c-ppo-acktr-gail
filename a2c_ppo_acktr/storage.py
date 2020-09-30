@@ -30,7 +30,7 @@ class RolloutStorage(object):
             self.actions = self.actions.long()
         self.masks = torch.ones(num_steps + 1, num_processes, 1)
         self.infos = torch.zeros(num_steps, num_processes, info_size) #[last_action]
-        self.decisions = torch.zeros(num_steps, num_processes, 1).long() #[action1]
+        self.decisions = torch.zeros(num_steps, num_processes, 1) #[action1]
 
         # Masks that indicate whether it's a true terminal state
         # or time limit end state

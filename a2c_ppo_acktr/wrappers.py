@@ -1,5 +1,5 @@
 import gym
-from gym.wrappers import FlattenObservation
+# from gym.wrappers import FlattenObservation
 import cv2
 from gym.spaces.box import Box
 from pdb import set_trace as st
@@ -126,7 +126,8 @@ class AsyncWrapper(gym.Wrapper):
                 if self.obs_interval == 0:
                     self.last_vis = self.real_vis.copy()
                 else:
-                    self.last_vis = np.zeros_like(self.render(mode='rgb_array'))
+                    self.pending_vis = self.real_vis.copy()
+                    self.last_vis = np.zeros_like(self.real_vis)
 
         return self.last_obs
 
