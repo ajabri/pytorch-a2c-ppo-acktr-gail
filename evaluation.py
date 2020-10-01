@@ -30,7 +30,6 @@ def to_video(list_of_imgs):
         H, W, D = imgs[0].shape
         real_imgs.append(np.zeros((3, H, W, D)))
     real_imgs = np.transpose(np.concatenate(real_imgs), (0, 3, 1, 2))
-    # real_imgs = np.concatenate(real_imgs)
     return real_imgs
 
 def concat_views(real_state, agent_view):
@@ -52,38 +51,33 @@ def slip_channel(rgb_img, decision, env_name):
     rgb_img[indices] = ratio * np.array([1, 0, 0])
     return rgb_img2 * decision + rgb_img * (1-decision)
 
-# def act(actor_critic, obs, eval_recurrent_hidden_states, eval_masks, info=None):
-#     with torch.no_grad():
-#         _, action, _, eval_recurrent_hidden_states = actor_critic.act(
-#             obs,
-#             eval_recurrent_hidden_states,
-#             eval_masks,
-#             # deterministic=True,
-#             deterministic=False,
-#             info=info)
-#     return action, eval_recurrent_hidden_states
-
 def act(actor_critic, obs, recurrent_hidden_states, masks, **kwargs):
     with torch.no_grad():
         value, action, action_log_prob, recurrent_hidden_states = actor_critic.act(
-            obs, recurrent_hidden_states, masks, **kwargs)
+            obs, recurrent_hidden_states, masks, deterministic=True, **kwargs)
 
         return action, recurrent_hidden_states
 
-def config_env(env_name):
-    if env_name in ['CartPole-v1']:
+def config_env(env_name, obs_shape):
+    keep_hist, hist, labels = False, None, None
+    if env_name in ['CartPole-v1', 'Hopper-v2']:
         max_size = 200
+        keep_hist = True
+        hist = [[[], []] for _ in range(obs_shape)]
     elif env_name in ['PongNoFrameSkip-v1']:
         max_size = 40
     else:
-        return 100
-    return max_size
+        max_size = 100
+    if env_name == 'CartPole-v1':
+        labels = ['Position', 'Velocity', 'Pole-Angle', 'Pole-Angular-Velocity']
+    return max_size, keep_hist, hist, labels
 
 
 def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
-             device, log_dict, async_params=[1, 1], j=0, ops=False, hidden_size=64, keep_vis=True):
+             device, log_dict, async_params=[1, 1], j=0, ops=False, hidden_size=64,
+             keep_vis=True):
     eval_envs = make_vec_envs(env_name, seed + num_processes, num_processes,
-                              None, eval_log_dir, device, keep_vis,
+                              None, eval_log_dir, device, True,
                               async_params=async_params, keep_vis=keep_vis)
 
     discrete_action = eval_envs.action_space.__class__.__name__ == "Discrete"
@@ -103,7 +97,9 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
     if keep_vis:
         eval_views, pairs = [[] for _ in range(num_processes)], [[] for _ in range(num_processes)]
         collected_views, collected_pairs = [], []
-    max_size = config_env(env_name)
+
+    max_size, keep_hist, hist, labels = config_env(env_name, obs.shape[-1])
+    keep_hist = (keep_hist and ops)
 
     last_action = torch.zeros((num_processes, 1)).to(device).long()
     start = time.time()
@@ -141,8 +137,6 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
                 if 'episode' in info.keys():
                     pair.append(concat_views(state, view * (1 - decision) + (view//2) * decision))
                     eval_view.append(real_view)
-                    eval_episode_rewards.append(info['episode']['r'])
-
                     collected_views.append(eval_view)
                     collected_pairs.append(pair)
                     pairs[idx] = []
@@ -154,10 +148,20 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
                     # ignore the episodes that failed
                     pairs[idx] = []
                     eval_views[idx] = []
-        else:
-            for info in infos:
-                if 'episode' in info.keys():
-                    eval_episode_rewards.append(info['episode']['r'])
+        if keep_hist:
+            for idx in range(obs.shape[0]):
+                if obs.device.type == 'cuda':
+                    capt = list(obs[:, idx][(decisions==0).reshape((-1))].cpu().numpy())
+                    pred = list(obs[:, idx][(decisions==1).reshape((-1))].cpu().numpy())
+                else:
+                    capt = list(obs[:, idx][(decisions==0).reshape((-1))].numpy())
+                    pred = list(obs[:, idx][(decisions==1).reshape((-1))].numpy())
+                hist[idx][0].extend(capt)
+                hist[idx][1].extend(pred)
+
+        for info in infos:
+            if 'episode' in info.keys():
+                eval_episode_rewards.append(info['episode']['r'])
 
         eval_masks = torch.tensor(
             [[0.0] if done_ else [1.0] for done_ in done],
@@ -168,8 +172,14 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
     if keep_vis:
         pairs = to_video(collected_pairs)
         imgs = to_hist(collected_views)
-        log_dict["hist " + str(j)] = wandb.Image(imgs)
+        log_dict["vis " + str(j)] = wandb.Image(imgs)
         log_dict["agent_views " + str(j)] = wandb.Video(pairs, fps=4, format="gif")
+    if keep_hist:
+        for (idx, label) in enumerate(labels):
+            capt, pred = hist[idx]
+            log_dict[label+'-Capt'] = wandb.Histogram(np.array(capt))
+            log_dict[label+'-Pred'] = wandb.Histogram(np.array(pred))
+
 
     log_dict['eval_len'] = len(eval_episode_rewards)
     log_dict['eval_mean_rew'] = np.mean(eval_episode_rewards)

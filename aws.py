@@ -24,7 +24,7 @@ from experiment_utils.run_sweep import run_sweep
 from evaluation import evaluate
 
 INSTANCE_TYPE = 'c4.xlarge'
-EXP_NAME = 'async/debug-eval'
+EXP_NAME = 'async/debug-histogram'
 
 def main(**kwargs):
     args = get_args()
@@ -280,19 +280,19 @@ if __name__ == "__main__":
         'entropy_coef': [0],
         'num_env_steps': [10000000],
         'cuda': [False],
-        'proj_name': ['debug-eval'],
+        'proj_name': ['hist'],
         'note': [''],
         'hidden_size': [64],
         'bonus1': [0],
         'no_bonus': [0],
-        'ops': [True],
-        'eval_interval': [5],
-        'obs_interval': [5],
+        'ops': [True, False],
+        'eval_interval': [10],
+        'obs_interval': [2, 5, 8],
         'ppo_epoch': [10],
         'gae_lambda': [0.95],
         'use_proper_time_limits': [True],
         # 'save_interval': [10],
-        'keep_vis': [True],
+        'keep_vis': [False],
         'persistent': [False],
         'pred_loss': [False],
         }
