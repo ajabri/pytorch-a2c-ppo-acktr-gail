@@ -408,7 +408,11 @@ class OpsBase(NNBase):
 
     def _forward_gru(self, x, hxs, masks, gate, action):
         if x.size(0) == hxs.size(0):
-
+            x, hxs, capt = self.cell(
+                x.unsqueeze(0),
+                (hxs * masks).unsqueeze(0),
+                (gate * masks).unsqueeze(0),
+                (action * masks).unsqueeze(0))
 
             x = x.squeeze(0)
             hxs = hxs.squeeze(0)

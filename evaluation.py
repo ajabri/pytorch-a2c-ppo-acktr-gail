@@ -68,6 +68,8 @@ def config_env(env_name):
         max_size = 200
     elif env_name in ['PongNoFrameSkip-v1']:
         max_size = 40
+    else:
+        return 100
     return max_size
 
 
@@ -77,19 +79,18 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
                               None, eval_log_dir, device, keep_vis,
                               async_params=async_params, keep_vis=keep_vis)
 
+    discrete_action = eval_envs.action_space.__class__.__name__ == "Discrete"
+
     vec_norm = utils.get_vec_normalize(eval_envs)
     if vec_norm is not None:
         vec_norm.eval()
         vec_norm.ob_rms = ob_rms
-    discrete_action = eval_envs.action_space.__class__.__name__ == "Discrete"
 
     eval_episode_rewards = []
     all_decisions = []
 
     obs = eval_envs.reset()
-    act_dim = 1
-    eval_recurrent_hidden_states = torch.zeros(
-        num_processes, hidden_size, device=device)
+    eval_recurrent_hidden_states = torch.zeros(num_processes, hidden_size, device=device)
     eval_masks = torch.zeros(num_processes, 1, device=device)
 
     if keep_vis:
@@ -97,7 +98,7 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
         collected_views, collected_pairs = [], []
     max_size = config_env(env_name)
 
-    last_action = torch.zeros((num_processes, act_dim)).to(device).long()
+    last_action = torch.zeros((num_processes, 1)).to(device).long()
     start = time.time()
     while len(eval_episode_rewards) < 4:
         if ops:
@@ -107,7 +108,7 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
             last_action = action
         else:
             decisions = torch.zeros((num_processes, 1)).to(device).long()
-            action, eval_recurrent_hidden_states = act(actor_critic, obs, eval_recurrent_hidden_states, eval_masks)
+            action, eval_recurrent_hidden_states = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks)
 
         # Obser reward and next obs
         obs, _, done, infos = eval_envs.step(torch.cat((decisions, action), dim=-1))
@@ -159,9 +160,6 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
         pairs = to_video(collected_pairs)
         imgs = to_hist(collected_views)
         log_dict["hist " + str(j)] = wandb.Image(imgs)
-        # file_name = eval_log_dir + '/view-' + str(j) + '.gif'
-        # imageio.mimsave(file_name, pairs.astype(np.uint8), duration=0.5)
-        # print("video saved to", file_name)
         log_dict["agent_views " + str(j)] = wandb.Video(pairs, fps=4, format="gif")
 
     log_dict['eval_len'] = len(eval_episode_rewards)

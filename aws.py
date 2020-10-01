@@ -34,6 +34,7 @@ def main(**kwargs):
 
     torch.manual_seed(kwargs['seed'])
     torch.cuda.manual_seed_all(kwargs['seed'])
+    # wandb.init(project='atari-base', config = args)
     wandb.init(project=kwargs['proj_name'], config = kwargs)
     kwargs['always_zero'] = (kwargs['ops'] == False)
 
@@ -64,9 +65,9 @@ def main(**kwargs):
             is_leaf=is_leaf,
             base_kwargs=dict(
                 recurrent=True,
-                gate_input='obs' if is_leaf else kwargs['gate_input'],
+                gate_input='obs' if is_leaf else 'hid',
                 hidden_size=kwargs['hidden_size'],
-                persistent=kwargs['persistent']),
+                persistent=False),
                 )
 
         entropy_coef = kwargs['entropy_coef']
@@ -113,7 +114,6 @@ def main(**kwargs):
     for r in rollouts:
         r.obs[0].copy_(obs)
         r.to(device)
-
 
     episode_rewards = deque(maxlen=10)
 
@@ -224,10 +224,9 @@ def main(**kwargs):
                 value_loss2, action_loss2, dist_entropy2, pred_err2 = update(1,
                     info=torch.cat([action1.float(), rollouts[1].actions[-1]], dim=-1))
 
-
         log_dict = {'j': j}
 
-        if j % kwargs['log_interval'] == 0:
+        if j % kwargs['log_interval'] == 0 and len(episode_rewards) > 1:
             total_num_steps = (j + 1) * kwargs['num_processes'] * kwargs['num_steps']
             end = time.time()
             print(
@@ -245,31 +244,32 @@ def main(**kwargs):
             log_dict['value_loss2'] = value_loss2
             log_dict['action_loss2'] = action_loss2
             log_dict['dist_entropy2'] = dist_entropy2
-            # log_dict['mean_gt'] = rollouts.decisions.float().mean().item()
             log_dict['mean_gt'] = rollouts[0].actions.float().mean().item()
             if kwargs['ops']:
                 log_dict['value_loss1'] = value_loss1
                 log_dict['action_loss1'] = action_loss1
                 log_dict['dist_entropy1'] = dist_entropy1
-        #
-        # if (kwargs['eval_interval'] is not None and len(episode_rewards) > 1 and j % kwargs['eval_interval'] == 0):
-        #     if len(envs.observation_space.shape) == 3:
-        #         ob_rms = None
-        #     else:
-        #         ob_rms = utils.get_vec_normalize(envs).ob_rms
-        #     evaluate(actor_critic, ob_rms, kwargs['env_name'], kwargs['seed'],
-        #              kwargs['num_processes'], eval_log_dir, device, log_dict, async_params, j=j, ops=kwargs['ops'],
-        #              hidden_size=kwargs['hidden_size'], keep_vis=kwargs['keep_vis'])
+
+        if (kwargs['eval_interval'] is not None and len(episode_rewards) > 1 and j % kwargs['eval_interval'] == 0):
+            if len(envs.observation_space.shape) == 3:
+                ob_rms = None
+            else:
+                ob_rms = utils.get_vec_normalize(envs).ob_rms
+            evaluate(actor_critic, ob_rms, kwargs['env_name'], kwargs['seed'],
+                     kwargs['num_processes'], eval_log_dir, device, log_dict, async_params, j=j, ops=kwargs['ops'],
+                     hidden_size=kwargs['hidden_size'], keep_vis=kwargs['keep_vis'])
 
         wandb.log(log_dict)
 
-
+# [, 'InvertedPendulum-v2']
 if __name__ == "__main__":
     sweep_params = {
-        'seed': [222, 333],
+        'seed': [222],
         'algo': ['ppo'],
 
         'env_name': ['CartPole-v1'],
+        # 'env_name': ['InvertedPendulum-v2'],
+        # 'env_name': ['Hopper-v2', 'Walker2d-v2'],
         'use_gae': [True],
         'lr': [3e-4],
         'value_loss_coef': [0.5],
@@ -279,21 +279,21 @@ if __name__ == "__main__":
         'log_interval': [1],
         'use_linear_lr_decay': [True],
         'entropy_coef': [0],
-        'num_env_steps': [1000000],
+        'num_env_steps': [10000000],
         'cuda': [False],
-        'proj_name': ['wrapper-debug2'],
+        'proj_name': ['debug'],
         'note': [''],
         'hidden_size': [64],
         'bonus1': [0],
         'no_bonus': [0],
-        'ops': [True, False],
+        'ops': [True],
         'eval_interval': [5],
-        'obs_interval': [2, 3, 5, 8],
+        'obs_interval': [5],
         'ppo_epoch': [10],
         'gae_lambda': [0.95],
         'use_proper_time_limits': [True],
-        'save_interval': [10],
-        'keep_vis': [False],
+        # 'save_interval': [10],
+        'keep_vis': [True],
         'persistent': [False],
         'pred_loss': [False],
         }
