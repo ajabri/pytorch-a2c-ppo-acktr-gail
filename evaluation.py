@@ -180,7 +180,6 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
             log_dict[label+'-Capt'] = wandb.Histogram(np.array(capt))
             log_dict[label+'-Pred'] = wandb.Histogram(np.array(pred))
 
-
     log_dict['eval_len'] = len(eval_episode_rewards)
     log_dict['eval_mean_rew'] = np.mean(eval_episode_rewards)
     log_dict['eval_mean_gt'] = np.mean(all_decisions)
