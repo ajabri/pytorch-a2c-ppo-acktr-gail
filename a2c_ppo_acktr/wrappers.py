@@ -9,52 +9,31 @@ from gym import error, spaces
 from gym.utils import seeding
 
 
-class ImgObsWrapper(gym.core.ObservationWrapper):
-    """
-    Use the image as the only observation output, no language/mission.
-    """
-
-    def __init__(self, env):
+class MinigridWrapper(gym.core.ObservationWrapper):
+    def __init__(self, env, tile_size = 8):
         super().__init__(env)
         self.observation_space = env.observation_space.spaces['image']
+        self.tile_size = tile_size
 
     def observation(self, obs):
         return obs['image']
 
-class ObservationOnlyWrapper(gym.core.ObservationWrapper):
-    def __init__(self, env):
-        super().__init__(env)
-        shape = env.observation_space['observation'].shape[0] + env.observation_space['achieved_goal'].shape[0] + env.observation_space['desired_goal'].shape[0]
-        self.observation_space = spaces.Box(-np.inf, np.inf, shape=(shape,), dtype='float32')
-
-    def observation(self, obs):
-        o = obs['observation']
-        a = obs['achieved_goal']
-        d = obs['desired_goal']
-        concatenated = np.concatenate((o, a, d))
-        return concatenated
-
-class TiledObsWrapper(ImgObsWrapper):
-    def __init__(self, env, tile_size = 8):
-        super().__init__(env)
-        self.tile_size = tile_size
-
-    def full_obs(self):
-        env = self.unwrapped
-        rgb_img = env.render(
-                    mode='rgb_array',
-                    highlight=False,
-                    tile_size=self.tile_size
-                )
-
-        rgb_img2 = rgb_img.copy() #200x200x3
-        r, g, b = rgb_img[:, :, 0], rgb_img[:, :, 1], rgb_img[:, :, 2]
-        indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
-        ratio = r[indices].reshape((-1, 1))
-        rgb_img2[indices] = ratio * np.array([0, 0, 1])
-        # RED: observe
-        # BLUE: predict
-        return rgb_img2, rgb_img
+    # def full_obs(self):
+    #     env = self.unwrapped
+    #     rgb_img = env.render(
+    #                 mode='rgb_array',
+    #                 highlight=False,
+    #                 tile_size=self.tile_size
+    #             )
+    #
+    #     rgb_img2 = rgb_img.copy() #200x200x3
+    #     r, g, b = rgb_img[:, :, 0], rgb_img[:, :, 1], rgb_img[:, :, 2]
+    #     indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
+    #     ratio = r[indices].reshape((-1, 1))
+    #     rgb_img2[indices] = ratio * np.array([0, 0, 1])
+    #     # RED: observe
+    #     # BLUE: predict
+    #     return rgb_img2, rgb_img
 
 
 class ResizeObservation(ObservationWrapper):
@@ -104,6 +83,12 @@ class AsyncWrapper(gym.Wrapper):
         self.predict_interval = predict_interval
         self.keep_vis = keep_vis
 
+    def get_vis(self, obs):
+        if len(obs.shape) == 3:
+            return obs.copy()
+        else:
+            return self.render(mode='rgb_array').copy()
+
     def reset(self):
         obs = self.env.reset()
         # directly request observation at the first step
@@ -115,19 +100,12 @@ class AsyncWrapper(gym.Wrapper):
             self.last_obs = np.zeros_like(obs)
 
         if self.keep_vis:
-            if len(obs.shape) == 3:
-                if self.obs_interval == 0:
-                    self.last_vis = obs.copy()
-                else:
-                    self.last_vis = np.zeros_like(obs) #no memory
-                self.real_vis = obs.copy()
+            self.real_vis = self.get_vis(obs)
+            if self.obs_interval == 0:
+                self.last_vis = self.real_vis.copy()
             else:
-                self.real_vis = self.render(mode='rgb_array')
-                if self.obs_interval == 0:
-                    self.last_vis = self.real_vis.copy()
-                else:
-                    self.pending_vis = self.real_vis.copy()
-                    self.last_vis = np.zeros_like(self.real_vis)
+                self.pending_vis = self.real_vis.copy()
+                self.last_vis = np.zeros_like(self.pending_vis) #no memory
 
         return self.last_obs
 
@@ -153,28 +131,16 @@ class AsyncWrapper(gym.Wrapper):
                     self.pending_obs = obs.copy()
 
         if self.keep_vis:
-            if len(obs.shape) == 3:
-                self.real_vis = obs.copy()
-                if self.obs_interval == 0:
-                    self.last_vis = obs.copy()
-                elif self.step_count == -1:
-                    if not predict:
-                        self.pending_vis = obs.copy()
-                elif self.step_count == 0:
-                        self.last_vis = self.pending_vis
-                        if not predict:
-                            self.pending_obs = obs.copy()
-            else:
-                self.real_vis = self.render(mode='rgb_array')
-                if self.obs_interval == 0:
-                    self.last_vis = self.real_vis
-                elif self.step_count == -1:
+            self.real_vis = self.get_vis(obs)
+            if self.obs_interval == 0:
+                self.last_vis = self.real_vis.copy()
+            elif self.step_count == -1:
+                if not predict:
+                    self.pending_vis = self.real_vis.copy()
+            elif self.step_count == 0:
+                    self.last_vis = self.pending_vis
                     if not predict:
                         self.pending_vis = self.real_vis.copy()
-                elif self.step_count == 0:
-                        self.last_vis = self.pending_vis
-                        if not predict:
-                            self.pending_vis = self.real_vis.copy()
 
         return self.last_obs, reward, done, info
 

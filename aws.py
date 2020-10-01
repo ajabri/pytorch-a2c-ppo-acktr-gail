@@ -24,7 +24,7 @@ from experiment_utils.run_sweep import run_sweep
 from evaluation import evaluate
 
 INSTANCE_TYPE = 'c4.xlarge'
-EXP_NAME = 'async/mujoco-test-wrapper-bonus'
+EXP_NAME = 'async/debug-eval'
 
 def main(**kwargs):
     args = get_args()
@@ -34,7 +34,6 @@ def main(**kwargs):
 
     torch.manual_seed(kwargs['seed'])
     torch.cuda.manual_seed_all(kwargs['seed'])
-    # wandb.init(project='atari-base', config = args)
     wandb.init(project=kwargs['proj_name'], config = kwargs)
     kwargs['always_zero'] = (kwargs['ops'] == False)
 
@@ -49,7 +48,7 @@ def main(**kwargs):
 
     torch.set_num_threads(1)
     device = torch.device("cuda:6" if kwargs['cuda'] else "cpu")
-    async_params = [kwargs['obs_interval'], kwargs['pred_interval']]
+    async_params = [kwargs['obs_interval'], 1]
 
     envs = make_vec_envs(kwargs['env_name'], kwargs['seed'], kwargs['num_processes'],
                          kwargs['gamma'], kwargs['log_dir'], device, False,
@@ -70,8 +69,6 @@ def main(**kwargs):
                 persistent=False),
                 )
 
-        entropy_coef = kwargs['entropy_coef']
-
         if kwargs['algo'] == 'ppo':
             agent = algo.PPO(
                 actor_critic,
@@ -79,7 +76,7 @@ def main(**kwargs):
                 kwargs['ppo_epoch'],
                 kwargs['num_mini_batch'],
                 kwargs['value_loss_coef'],
-                entropy_coef,
+                kwargs['entropy_coef'],
                 lr=kwargs['lr'],
                 eps=kwargs['eps'],
                 max_grad_norm=kwargs['max_grad_norm'])
@@ -188,6 +185,7 @@ def main(**kwargs):
                             action_log_prob2, value2, reward, masks, bad_masks,
                             infos=torch.cat([action1, last_action], dim=1))
 
+        print(episode_rewards)
         def update(i, info=None):
             with torch.no_grad():
                 next_value = actor_critic[i].get_value(
@@ -264,10 +262,11 @@ def main(**kwargs):
 # [, 'InvertedPendulum-v2']
 if __name__ == "__main__":
     sweep_params = {
-        'seed': [222],
+        'seed': [222, 333],
         'algo': ['ppo'],
 
         'env_name': ['CartPole-v1'],
+        # 'env_name': ['MiniGrid-Dynamic-Obstacles-5x5-v0'],
         # 'env_name': ['InvertedPendulum-v2'],
         # 'env_name': ['Hopper-v2', 'Walker2d-v2'],
         'use_gae': [True],
@@ -281,7 +280,7 @@ if __name__ == "__main__":
         'entropy_coef': [0],
         'num_env_steps': [10000000],
         'cuda': [False],
-        'proj_name': ['debug'],
+        'proj_name': ['debug-eval'],
         'note': [''],
         'hidden_size': [64],
         'bonus1': [0],

@@ -28,7 +28,7 @@ def to_video(list_of_imgs):
     for imgs in list_of_imgs:
         real_imgs.append(imgs)
         H, W, D = imgs[0].shape
-        real_imgs.append(np.zeros((10, H, W, D)))
+        real_imgs.append(np.zeros((3, H, W, D)))
     real_imgs = np.transpose(np.concatenate(real_imgs), (0, 3, 1, 2))
     # real_imgs = np.concatenate(real_imgs)
     return real_imgs
@@ -52,16 +52,23 @@ def slip_channel(rgb_img, decision, env_name):
     rgb_img[indices] = ratio * np.array([1, 0, 0])
     return rgb_img2 * decision + rgb_img * (1-decision)
 
-def act(actor_critic, obs, eval_recurrent_hidden_states, eval_masks, info=None):
+# def act(actor_critic, obs, eval_recurrent_hidden_states, eval_masks, info=None):
+#     with torch.no_grad():
+#         _, action, _, eval_recurrent_hidden_states = actor_critic.act(
+#             obs,
+#             eval_recurrent_hidden_states,
+#             eval_masks,
+#             # deterministic=True,
+#             deterministic=False,
+#             info=info)
+#     return action, eval_recurrent_hidden_states
+
+def act(actor_critic, obs, recurrent_hidden_states, masks, **kwargs):
     with torch.no_grad():
-        _, action, _, eval_recurrent_hidden_states = actor_critic.act(
-            obs,
-            eval_recurrent_hidden_states,
-            eval_masks,
-            # deterministic=True,
-            deterministic=False,
-            info=info)
-    return action, eval_recurrent_hidden_states
+        value, action, action_log_prob, recurrent_hidden_states = actor_critic.act(
+            obs, recurrent_hidden_states, masks, **kwargs)
+
+        return action, recurrent_hidden_states
 
 def config_env(env_name):
     if env_name in ['CartPole-v1']:
@@ -103,12 +110,14 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
     while len(eval_episode_rewards) < 4:
         if ops:
             decisions, _ = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
-            action, eval_recurrent_hidden_states = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
-                                                       info=torch.cat([decisions, last_action], dim=1))
-            last_action = action
         else:
             decisions = torch.zeros((num_processes, 1)).to(device).long()
-            action, eval_recurrent_hidden_states = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks)
+        action, eval_recurrent_hidden_states = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
+                                                   info=torch.cat([decisions, last_action], dim=1))
+        if discrete_action:
+            last_action = action + 1
+        else:
+            last_action = action
 
         # Obser reward and next obs
         obs, _, done, infos = eval_envs.step(torch.cat((decisions, action), dim=-1))

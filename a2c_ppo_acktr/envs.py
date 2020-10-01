@@ -37,6 +37,10 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets,
         if env_id.startswith("dm"):
             _, domain, task = env_id.split('.')
             env = dm_control2gym.make(domain_name=domain, task_name=task)
+        elif env_id.startswith("MiniGrid"):
+            import gym_minigrid
+            env = gym.make(env)
+            env = MinigridWrapper(env)
         else:
             env = gym.make(env_id)
 
@@ -67,6 +71,7 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets,
                 "CNN models work only for atari,\n"
                 "please use a custom wrapper for a custom pixel input env.\n"
                 "See wrap_deepmind for an example.")
+
 
         # If the input has shape (W,H,3), wrap for PyTorch convolutions
         obs_shape = env.observation_space.shape
