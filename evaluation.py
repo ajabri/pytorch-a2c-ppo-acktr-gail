@@ -69,7 +69,7 @@ def config_env(env_name, obs_shape):
     else:
         max_size = 100
     if env_name == 'CartPole-v1':
-        labels = ['Position', 'Velocity', 'Pole-Angle', 'Pole-Angular-Velocity']
+        labels = ['position', 'velocity', 'pole-angle', 'pole-angular-velocity']
     return max_size, keep_hist, hist, labels
 
 
@@ -177,8 +177,8 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
     if keep_hist:
         for (idx, label) in enumerate(labels):
             capt, pred = hist[idx]
-            log_dict[label+'-Capt'] = wandb.Histogram(np.array(capt))
-            log_dict[label+'-Pred'] = wandb.Histogram(np.array(pred))
+            log_dict[label+'-Capt'] = wandb.Histogram(torch.from_numpy(np.array(capt)))
+            log_dict[label+'-Pred'] = wandb.Histogram(torch.from_numpy(np.array(pred)))
 
     log_dict['eval_len'] = len(eval_episode_rewards)
     log_dict['eval_mean_rew'] = np.mean(eval_episode_rewards)
