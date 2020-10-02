@@ -16,7 +16,8 @@ class MinigridWrapper(gym.core.ObservationWrapper):
         self.tile_size = tile_size
 
     def observation(self, obs):
-        return obs['image']
+        obs = obs['image']
+        return obs
 
     # def full_obs(self):
     #     env = self.unwrapped
@@ -65,7 +66,7 @@ class ResizeObservation(ObservationWrapper):
 
 
 class AsyncWrapper(gym.Wrapper):
-    def __init__(self, env, obs_interval, predict_interval, keep_vis=False):
+    def __init__(self, env, env_id, obs_interval, predict_interval, keep_vis=False):
         if not 'reward_range' in env.__dict__:
             env.reward_range = (-float('inf'), float('inf'))
         if not 'metadata' in env.__dict__:
@@ -79,6 +80,7 @@ class AsyncWrapper(gym.Wrapper):
         """
         gym.Wrapper.__init__(self, env)
         self.env = env
+        self.env_id = env_id
         self.obs_interval = obs_interval
         self.predict_interval = predict_interval
         self.keep_vis = keep_vis
@@ -86,6 +88,14 @@ class AsyncWrapper(gym.Wrapper):
     def get_vis(self, obs):
         if len(obs.shape) == 3:
             return obs.copy()
+
+        elif self.env_id.startswith("MiniGrid"):
+            rgb_img = self.unwrapped.render(
+                        mode='rgb_array',
+                        highlight=False,
+                        tile_size=8
+                    ).copy()
+            return rgb_img
         else:
             return self.render(mode='rgb_array').copy()
 

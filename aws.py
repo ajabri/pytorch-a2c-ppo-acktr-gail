@@ -24,7 +24,7 @@ from experiment_utils.run_sweep import run_sweep
 from evaluation import evaluate
 
 INSTANCE_TYPE = 'c4.xlarge'
-EXP_NAME = 'async/debug-histogram'
+EXP_NAME = 'async/debug-histogram3'
 
 def main(**kwargs):
     args = get_args()
@@ -266,9 +266,10 @@ if __name__ == "__main__":
         'algo': ['ppo'],
 
         'env_name': ['CartPole-v1'],
-        # 'env_name': ['MiniGrid-Dynamic-Obstacles-5x5-v0'],
+        # 'env_name': ['MiniGrid-Dynamic-Obstacles-5x5-v0', 'MiniGrid-Dynamic-Obstacles-6x6-v0', 'MiniGrid-Dynamic-Obstacles-8x8-v0'],
         # 'env_name': ['InvertedPendulum-v2'],
         # 'env_name': ['Hopper-v2', 'Walker2d-v2'],
+        # 'env_name': ['Walker2d-v2'],
         'use_gae': [True],
         'lr': [3e-4],
         'value_loss_coef': [0.5],
@@ -278,16 +279,16 @@ if __name__ == "__main__":
         'log_interval': [1],
         'use_linear_lr_decay': [True],
         'entropy_coef': [0],
-        'num_env_steps': [10000000],
+        'num_env_steps': [2000000],
         'cuda': [False],
-        'proj_name': ['hist'],
+        'proj_name': ['hist3'],
         'note': [''],
         'hidden_size': [64],
         'bonus1': [0],
         'no_bonus': [0],
         'ops': [True],
-        'eval_interval': [1],
-        'obs_interval': [2, 5, 8],
+        'eval_interval': [5],
+        'obs_interval': [2, 3, 5, 8],
         'ppo_epoch': [10],
         'gae_lambda': [0.95],
         'use_proper_time_limits': [True],

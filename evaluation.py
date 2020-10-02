@@ -47,6 +47,9 @@ def slip_channel(rgb_img, decision, env_name):
     elif env_name in ['PongNoFrameSkip-v1']:
         indices = np.logical_and(r>100, np.logical_and(g>100, b>100))
         ratio = r[indices].reshape((-1, 1))
+    elif env_name.startswith("MiniGrid"):
+        indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
+        ratio = r[indices].reshape((-1, 1))
     rgb_img2[indices] = ratio * np.array([0, 0, 1])
     rgb_img[indices] = ratio * np.array([1, 0, 0])
     return rgb_img2 * decision + rgb_img * (1-decision)
@@ -60,7 +63,7 @@ def act(actor_critic, obs, recurrent_hidden_states, masks, **kwargs):
 
 def config_env(env_name, obs_shape):
     keep_hist, hist, labels = False, None, None
-    if env_name in ['CartPole-v1', 'Hopper-v2']:
+    if env_name in ['CartPole-v1']:
         max_size = 200
         keep_hist = True
         hist = [[[], []] for _ in range(obs_shape)]
@@ -101,22 +104,28 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
     max_size, keep_hist, hist, labels = config_env(env_name, obs.shape[-1])
     keep_hist = (keep_hist and ops)
 
-    last_action = torch.zeros((num_processes, 1)).to(device).long()
+    if discrete_action:
+        last_action = torch.zeros((num_processes, 1)).to(device).long()
+    else:
+        last_action = torch.zeros((num_processes, eval_envs.action_space.shape[0])).to(device).long()
+
     start = time.time()
     while len(eval_episode_rewards) < 4:
         if ops:
             decisions, _ = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
         else:
             decisions = torch.zeros((num_processes, 1)).to(device).long()
-        action, eval_recurrent_hidden_states = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
-                                                   info=torch.cat([decisions, last_action], dim=1))
         if discrete_action:
+            action, eval_recurrent_hidden_states = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
+                                                       info=torch.cat([decisions, last_action], dim=1))
             last_action = action + 1
         else:
+            action, eval_recurrent_hidden_states = act(actor_critic[1], obs, eval_recurrent_hidden_states, eval_masks,
+                                                       info=torch.cat([decisions.float(), last_action.float()], dim=1))
             last_action = action
 
         # Obser reward and next obs
-        obs, _, done, infos = eval_envs.step(torch.cat((decisions, action), dim=-1))
+        obs, _, done, infos = eval_envs.step(torch.cat((decisions, action.long()), dim=-1))
         if decisions.device.type == 'cuda':
             decisions = decisions.cpu().numpy()
         else:
@@ -175,10 +184,40 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
         log_dict["vis " + str(j)] = wandb.Image(imgs)
         log_dict["agent_views " + str(j)] = wandb.Video(pairs, fps=4, format="gif")
     if keep_hist:
+        import matplotlib.pyplot as plt
         for (idx, label) in enumerate(labels):
+            file_name = eval_log_dir + label + ".jpg"
             capt, pred = hist[idx]
-            log_dict[label+'-Capt'] = wandb.Histogram(torch.from_numpy(np.array(capt)))
-            log_dict[label+'-Pred'] = wandb.Histogram(torch.from_numpy(np.array(pred)))
+            fig, (ax1, ax2) = plt.subplots(nrows=2)
+            ns, bins, patches = ax1.hist([capt, pred], normed=False,
+                                  bins=10,
+                                  alpha=0.7,
+                                  label=['obs', 'pred'],
+                                  color=['blue', 'red']
+                                  )
+            ax1.legend()
+            ax2.bar(bins[:-1],     # this is what makes it comparable
+                    ns[1] / (ns[1]+ns[0]), # maybe check for div-by-zero!
+                    color='orange',
+                    alpha=0.5,
+                    linewidth=0,
+                    width=1/3)
+
+            ax1.title.set_text(label)
+            ax2.set_ylabel('pred/(pred+obs)')
+            ax1.set_ylabel('hist')
+            plt.savefig(file_name)
+            plt.clf()
+        img_list = []
+        for label in labels:
+            file_name = eval_log_dir + label + ".jpg"
+            img = cv2.imread(file_name).copy()
+            img_list.append(img)
+        vertical = np.concatenate(img_list)
+        split = int(np.sqrt(len(img_list)))
+        H, W, D = img_list[0].shape
+        result = np.concatenate(np.reshape(vertical, [split, H*split, W, D]), axis=1)
+        log_dict["hist-" + str(j)] = wandb.Image(result)
 
     log_dict['eval_len'] = len(eval_episode_rewards)
     log_dict['eval_mean_rew'] = np.mean(eval_episode_rewards)

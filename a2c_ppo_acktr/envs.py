@@ -13,7 +13,7 @@ from baselines.common.vec_env.shmem_vec_env import ShmemVecEnv
 from baselines.common.vec_env.vec_normalize import \
     VecNormalize as VecNormalize_
 
-from a2c_ppo_acktr.wrappers import AsyncWrapper
+from a2c_ppo_acktr.wrappers import *
 from pdb import set_trace as st
 try:
     import dm_control2gym
@@ -39,8 +39,10 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets,
             env = dm_control2gym.make(domain_name=domain, task_name=task)
         elif env_id.startswith("MiniGrid"):
             import gym_minigrid
-            env = gym.make(env)
+            from gym.wrappers import FlattenObservation
+            env = gym.make(env_id)
             env = MinigridWrapper(env)
+            env = FlattenObservation(env)
         else:
             env = gym.make(env_id)
 
@@ -61,7 +63,7 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets,
                 allow_early_resets=allow_early_resets)
 
         obs_interval, pred_interval = async_params
-        env = AsyncWrapper(env, obs_interval, pred_interval, keep_vis=keep_vis)
+        env = AsyncWrapper(env, env_id, obs_interval, pred_interval, keep_vis=keep_vis)
 
         if is_atari:
             if len(env.observation_space.shape) == 3:
