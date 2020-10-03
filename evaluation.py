@@ -10,10 +10,13 @@ import gym
 import wandb
 import imageio
 
-def to_hist(collected_agent_views):
+def to_hist(collected_agent_views, env_name):
     img_list = []
     for agent_views in collected_agent_views[:4]:
-        im = np.max(agent_views, axis=0)
+        if env_name.startswith("Vizdoom"):
+            im = np.mean(agent_views, axis=0)
+        else:
+            im = np.max(agent_views, axis=0)
         img_list.append(im)
 
     H, W, D = img_list[0].shape
@@ -50,8 +53,12 @@ def slip_channel(rgb_img, decision, env_name):
     elif env_name.startswith("MiniGrid"):
         indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
         ratio = r[indices].reshape((-1, 1))
+    elif env_name.startswith("Vizdoom"):
+        indices = np.logical_and(r<50, np.logical_and(g<50, b<50))
+        ratio = 200
     rgb_img2[indices] = ratio * np.array([0, 0, 1])
     rgb_img[indices] = ratio * np.array([1, 0, 0])
+
     return rgb_img2 * decision + rgb_img * (1-decision)
 
 def act(actor_critic, obs, recurrent_hidden_states, masks, **kwargs):
@@ -78,10 +85,11 @@ def config_env(env_name, obs_shape):
 
 def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
              device, log_dict, async_params=[1, 1], j=0, ops=False, hidden_size=64,
-             keep_vis=True, persistent=False):
+             keep_vis=True, persistent=False, scale=1.):
     eval_envs = make_vec_envs(env_name, seed + num_processes, num_processes,
                               None, eval_log_dir, device, True,
-                              async_params=async_params, keep_vis=keep_vis)
+                              async_params=async_params, keep_vis=keep_vis,
+                              scale=scale)
 
     discrete_action = eval_envs.action_space.__class__.__name__ == "Discrete"
 
@@ -113,6 +121,8 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
         last_action = torch.zeros((num_processes, eval_envs.action_space.shape[0])).to(device).long()
 
     start = time.time()
+    step = 0
+    epi_lengths = []
     while len(eval_episode_rewards) < 4:
         if ops:
             decisions, _ = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
@@ -174,7 +184,9 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
 
         for info in infos:
             if 'episode' in info.keys():
+                epi_lengths.append(step)
                 eval_episode_rewards.append(info['episode']['r'])
+        step += 1
 
         eval_masks = torch.tensor(
             [[0.0] if done_ else [1.0] for done_ in done],
@@ -184,7 +196,7 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
     eval_envs.close()
     if keep_vis:
         pairs = to_video(collected_pairs)
-        imgs = to_hist(collected_views)
+        imgs = to_hist(collected_views, env_name)
         log_dict["vis " + str(j)] = wandb.Image(imgs)
         log_dict["agent_views " + str(j)] = wandb.Video(pairs, fps=4, format="gif")
     if keep_hist:
@@ -224,6 +236,7 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
         log_dict["hist-" + str(j)] = wandb.Image(result)
 
     log_dict['eval_len'] = len(eval_episode_rewards)
+    log_dict['eval_epi_len'] = np.mean(epi_lengths)
     log_dict['eval_mean_rew'] = np.mean(eval_episode_rewards)
     log_dict['eval_mean_gt'] = np.mean(all_decisions)
     log_dict['eval_time'] = time.time() - start

@@ -38,14 +38,6 @@ class ResizeObservation(ObservationWrapper):
             observation = np.expand_dims(observation, -1)
         return observation
 
-    def full_obs(self):
-        rgb_img = self.observation(self.state)
-        # print(rgb_img.observation)
-        rgb_img2 = rgb_img.copy() #200x200x3
-        rgb_img2 = rgb_img2//4
-        return rgb_img2, rgb_img
-
-
 
 
 class AsyncWrapper(gym.Wrapper):

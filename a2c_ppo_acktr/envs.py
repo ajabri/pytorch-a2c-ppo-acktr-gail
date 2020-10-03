@@ -12,11 +12,15 @@ from baselines.common.vec_env.dummy_vec_env import DummyVecEnv
 from baselines.common.vec_env.shmem_vec_env import ShmemVecEnv
 from baselines.common.vec_env.vec_normalize import \
     VecNormalize as VecNormalize_
-
 from a2c_ppo_acktr.wrappers import *
 from pdb import set_trace as st
 try:
     import dm_control2gym
+except ImportError:
+    pass
+
+try:
+    import vizdoomgym
 except ImportError:
     pass
 
@@ -68,6 +72,8 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets,
         if is_atari:
             if len(env.observation_space.shape) == 3:
                 env = wrap_deepmind(env)
+        elif env_id.startswith("Vizdoom"):
+            env = ResizeObservation(env, prop=scale)
         elif len(env.observation_space.shape) == 3:
             raise NotImplementedError(
                 "CNN models work only for atari,\n"

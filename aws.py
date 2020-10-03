@@ -37,9 +37,9 @@ def main(**kwargs):
     wandb.init(project=kwargs['proj_name'], config = kwargs)
     kwargs['always_zero'] = (kwargs['ops'] == False)
 
-    # if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
-    #     torch.backends.cudnn.benchmark = False
-    #     torch.backends.cudnn.deterministic = True
+    if kwargs['cuda'] and torch.cuda.is_available() and kwargs['cuda_deterministic']:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
 
     log_dir = os.getcwd() + '/data/' + EXP_NAME
     eval_log_dir = log_dir + "/eval"
@@ -47,12 +47,12 @@ def main(**kwargs):
     utils.cleanup_log_dir(eval_log_dir)
 
     torch.set_num_threads(1)
-    device = torch.device("cuda:6" if kwargs['cuda'] else "cpu")
+    device = torch.device("cuda:2" if kwargs['cuda'] else "cpu")
     async_params = [kwargs['obs_interval'], 1]
 
     envs = make_vec_envs(kwargs['env_name'], kwargs['seed'], kwargs['num_processes'],
                          kwargs['gamma'], kwargs['log_dir'], device, False,
-                         async_params=async_params)
+                         async_params=async_params, scale=kwargs['scale'])
     discrete_action = envs.action_space.__class__.__name__ == "Discrete"
 
     def make_agent(is_leaf=True):
@@ -254,41 +254,41 @@ def main(**kwargs):
                 ob_rms = utils.get_vec_normalize(envs).ob_rms
             evaluate(actor_critic, ob_rms, kwargs['env_name'], kwargs['seed'],
                      kwargs['num_processes'], eval_log_dir, device, log_dict, async_params, j=j, ops=kwargs['ops'],
-                     hidden_size=kwargs['hidden_size'], keep_vis=kwargs['keep_vis'], persistent=kwargs['persistent'])
+                     hidden_size=kwargs['hidden_size'], keep_vis=kwargs['keep_vis'], persistent=kwargs['persistent'],
+                     scale=kwargs['scale'])
 
         wandb.log(log_dict)
 
-# [, 'InvertedPendulum-v2']
 if __name__ == "__main__":
     sweep_params = {
-        'seed': [222, 333],
+        'seed': [222],
         'algo': ['ppo'],
 
-        'env_name': ['CartPole-v1'],
+        # 'env_name': ['CartPole-v1'],
         # 'env_name': ['MiniGrid-Dynamic-Obstacles-5x5-v0', 'MiniGrid-Dynamic-Obstacles-6x6-v0', 'MiniGrid-Dynamic-Obstacles-8x8-v0'],
-        'env_name': ['MiniGrid-Dynamic-Obstacles-5x5-v0', 'MiniGrid-Dynamic-Obstacles-6x6-v0'],
-        # 'env_name': ['InvertedPendulum-v2'],
+        # 'env_name': ['MiniGrid-Dynamic-Obstacles-5x5-v0', 'MiniGrid-Dynamic-Obstacles-6x6-v0'],
+        'env_name': ['VizdoomDefendLine-v0'],
         # 'env_name': ['Hopper-v2', 'Walker2d-v2'],
         # 'env_name': ['Walker2d-v2'],
         'use_gae': [True],
-        'lr': [3e-4],
+        'lr': [2.5e-4],
         'value_loss_coef': [0.5],
-        'num_processes': [4],
+        'num_processes': [8],
         'num_steps': [512],
-        'num_mini_batch': [2],
+        'num_mini_batch': [4],
         'log_interval': [1],
         'use_linear_lr_decay': [True],
         'entropy_coef': [0],
         'num_env_steps': [1000000],
-        'cuda': [False],
-        'proj_name': ['async-minigrid2'],
+        'cuda': [True],
+        'proj_name': ['bonus-vizdoom4'],
         'note': [''],
-        'hidden_size': [64],
+        'hidden_size': [128],
         'bonus1': [0],
         'no_bonus': [0],
-        'ops': [True, False],
+        'ops': [True],
         'eval_interval': [10],
-        'obs_interval': [0, 1],
+        'obs_interval': [0],
         'ppo_epoch': [10],
         'gae_lambda': [0.95],
         'use_proper_time_limits': [True],
@@ -296,6 +296,7 @@ if __name__ == "__main__":
         'keep_vis': [True],
         'persistent': [False],
         'pred_loss': [False],
+        'scale': [0.25],
         }
 
     run_sweep(main, sweep_params, EXP_NAME, INSTANCE_TYPE)
