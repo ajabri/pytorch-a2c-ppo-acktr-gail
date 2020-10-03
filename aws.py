@@ -24,7 +24,7 @@ from experiment_utils.run_sweep import run_sweep
 from evaluation import evaluate
 
 INSTANCE_TYPE = 'c4.xlarge'
-EXP_NAME = 'async/debug-histogram3'
+EXP_NAME = 'async/debug-histogram'
 
 def main(**kwargs):
     args = get_args()
@@ -66,20 +66,19 @@ def main(**kwargs):
                 recurrent=True,
                 gate_input='obs' if is_leaf else 'hid',
                 hidden_size=kwargs['hidden_size'],
-                persistent=False),
+                persistent=kwargs['persistent']),
                 )
 
-        if kwargs['algo'] == 'ppo':
-            agent = algo.PPO(
-                actor_critic,
-                kwargs['clip_param'],
-                kwargs['ppo_epoch'],
-                kwargs['num_mini_batch'],
-                kwargs['value_loss_coef'],
-                kwargs['entropy_coef'],
-                lr=kwargs['lr'],
-                eps=kwargs['eps'],
-                max_grad_norm=kwargs['max_grad_norm'])
+        agent = algo.PPO(
+            actor_critic,
+            kwargs['clip_param'],
+            kwargs['ppo_epoch'],
+            kwargs['num_mini_batch'],
+            kwargs['value_loss_coef'],
+            kwargs['entropy_coef'],
+            lr=kwargs['lr'],
+            eps=kwargs['eps'],
+            max_grad_norm=kwargs['max_grad_norm'])
 
         if discrete_action:
             action_dim = 1
@@ -255,7 +254,7 @@ def main(**kwargs):
                 ob_rms = utils.get_vec_normalize(envs).ob_rms
             evaluate(actor_critic, ob_rms, kwargs['env_name'], kwargs['seed'],
                      kwargs['num_processes'], eval_log_dir, device, log_dict, async_params, j=j, ops=kwargs['ops'],
-                     hidden_size=kwargs['hidden_size'], keep_vis=kwargs['keep_vis'])
+                     hidden_size=kwargs['hidden_size'], keep_vis=kwargs['keep_vis'], persistent=kwargs['persistent'])
 
         wandb.log(log_dict)
 
@@ -267,6 +266,7 @@ if __name__ == "__main__":
 
         'env_name': ['CartPole-v1'],
         # 'env_name': ['MiniGrid-Dynamic-Obstacles-5x5-v0', 'MiniGrid-Dynamic-Obstacles-6x6-v0', 'MiniGrid-Dynamic-Obstacles-8x8-v0'],
+        'env_name': ['MiniGrid-Dynamic-Obstacles-5x5-v0', 'MiniGrid-Dynamic-Obstacles-6x6-v0'],
         # 'env_name': ['InvertedPendulum-v2'],
         # 'env_name': ['Hopper-v2', 'Walker2d-v2'],
         # 'env_name': ['Walker2d-v2'],
@@ -274,26 +274,26 @@ if __name__ == "__main__":
         'lr': [3e-4],
         'value_loss_coef': [0.5],
         'num_processes': [4],
-        'num_steps': [2048],
+        'num_steps': [512],
         'num_mini_batch': [2],
         'log_interval': [1],
         'use_linear_lr_decay': [True],
         'entropy_coef': [0],
-        'num_env_steps': [2000000],
+        'num_env_steps': [1000000],
         'cuda': [False],
-        'proj_name': ['hist3'],
+        'proj_name': ['async-minigrid2'],
         'note': [''],
         'hidden_size': [64],
         'bonus1': [0],
         'no_bonus': [0],
-        'ops': [True],
-        'eval_interval': [5],
-        'obs_interval': [2, 3, 5, 8],
+        'ops': [True, False],
+        'eval_interval': [10],
+        'obs_interval': [0, 1],
         'ppo_epoch': [10],
         'gae_lambda': [0.95],
         'use_proper_time_limits': [True],
         # 'save_interval': [10],
-        'keep_vis': [False],
+        'keep_vis': [True],
         'persistent': [False],
         'pred_loss': [False],
         }

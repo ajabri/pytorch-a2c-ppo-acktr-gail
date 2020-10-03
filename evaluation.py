@@ -78,7 +78,7 @@ def config_env(env_name, obs_shape):
 
 def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
              device, log_dict, async_params=[1, 1], j=0, ops=False, hidden_size=64,
-             keep_vis=True):
+             keep_vis=True, persistent=False):
     eval_envs = make_vec_envs(env_name, seed + num_processes, num_processes,
                               None, eval_log_dir, device, True,
                               async_params=async_params, keep_vis=keep_vis)
@@ -94,7 +94,10 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
     all_decisions = []
 
     obs = eval_envs.reset()
-    eval_recurrent_hidden_states = torch.zeros(num_processes, hidden_size, device=device)
+    if persistent:
+        eval_recurrent_hidden_states = torch.zeros(num_processes, hidden_size*2, device=device)
+    else:
+        eval_recurrent_hidden_states = torch.zeros(num_processes, hidden_size, device=device)
     eval_masks = torch.zeros(num_processes, 1, device=device)
 
     if keep_vis:
@@ -159,12 +162,13 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
                     eval_views[idx] = []
         if keep_hist:
             for idx in range(obs.shape[0]):
+                scalred_back_obs = obs * np.sqrt(ob_rms.var + 1e-8) + ob_rms.mean
                 if obs.device.type == 'cuda':
-                    capt = list(obs[:, idx][(decisions==0).reshape((-1))].cpu().numpy())
-                    pred = list(obs[:, idx][(decisions==1).reshape((-1))].cpu().numpy())
+                    capt = list(scalred_back_obs[:, idx][(decisions==0).reshape((-1))].cpu().numpy())
+                    pred = list(scalred_back_obs[:, idx][(decisions==1).reshape((-1))].cpu().numpy())
                 else:
-                    capt = list(obs[:, idx][(decisions==0).reshape((-1))].numpy())
-                    pred = list(obs[:, idx][(decisions==1).reshape((-1))].numpy())
+                    capt = list(scalred_back_obs[:, idx][(decisions==0).reshape((-1))].numpy())
+                    pred = list(scalred_back_obs[:, idx][(decisions==1).reshape((-1))].numpy())
                 hist[idx][0].extend(capt)
                 hist[idx][1].extend(pred)
 

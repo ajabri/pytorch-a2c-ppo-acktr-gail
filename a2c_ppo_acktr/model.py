@@ -330,7 +330,7 @@ class OpsBase(NNBase):
             hidden_critic = self.critic(x)
             hidden_actor = self.actor(x)
         else: #1
-            assert self.gate_input in ['hid', 'obs'], 'invalid gate iput'
+            assert self.gate_input in ['hid', 'obs'], 'invalid gate input'
             if self.gate_input == 'hid':
                 hidden_critic = self.critic(rnn_hxs)
                 hidden_actor = self.actor(rnn_hxs)

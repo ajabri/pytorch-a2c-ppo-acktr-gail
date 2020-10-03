@@ -19,23 +19,6 @@ class MinigridWrapper(gym.core.ObservationWrapper):
         obs = obs['image']
         return obs
 
-    # def full_obs(self):
-    #     env = self.unwrapped
-    #     rgb_img = env.render(
-    #                 mode='rgb_array',
-    #                 highlight=False,
-    #                 tile_size=self.tile_size
-    #             )
-    #
-    #     rgb_img2 = rgb_img.copy() #200x200x3
-    #     r, g, b = rgb_img[:, :, 0], rgb_img[:, :, 1], rgb_img[:, :, 2]
-    #     indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
-    #     ratio = r[indices].reshape((-1, 1))
-    #     rgb_img2[indices] = ratio * np.array([0, 0, 1])
-    #     # RED: observe
-    #     # BLUE: predict
-    #     return rgb_img2, rgb_img
-
 
 class ResizeObservation(ObservationWrapper):
     r"""Downsample the image observation to a square image. """
