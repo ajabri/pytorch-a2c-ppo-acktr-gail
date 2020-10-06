@@ -30,7 +30,7 @@ class NNBase(nn.Module):
         if self._recurrent:
             return self._hidden_size
         return 1
-
+ 
     @property
     def output_size(self):
         return self._hidden_size
@@ -75,7 +75,7 @@ class OpsPolicy(nn.Module):
         raise NotImplementedError
 
     def act(self, inputs, rnn_hxs, masks, deterministic=False, info=None):
-        value, actor_features, rnn_hxs, all_hxs = self.base(inputs, rnn_hxs, masks, info=info)
+        value, actor_features, rnn_hxs, _ = self.base(inputs, rnn_hxs, masks, info=info)
         dist = self.dist(actor_features) #[16, 64]
 
         if deterministic:
@@ -158,11 +158,7 @@ class OpsCell(nn.Module):
             init_(nn.Linear(hidden_size, cap_out_dim)), nn.Tanh()
         )
 
-        if self.pred_mode == 'pred_model':
-            # forward model
-            self.predict = Dynamics(obs_dim=cap_out_dim, act_dim=act_dim, hidden_size=cap_out_dim)
-        elif self.pred_mode == 'pos_enc':
-            self.predict = PositionalEncoding(d_model=cap_out_dim)
+        self.predict = Dynamics(obs_dim=cap_out_dim, act_dim=act_dim, hidden_size=cap_out_dim)
 
         for name, param in self.predict.named_parameters():
             if 'bias' in name:
@@ -245,9 +241,9 @@ class OpsBase(NNBase):
         if is_leaf:
             if self.discrete_action:
                 self.act_emb = nn.Embedding(action_space.n + 1, hidden_size, padding_idx=0)
-            else:
-                self.act_emb = nn.Sequential(
-                    init_(nn.Linear(action_space.shape[0], hidden_size)), nn.ReLU())
+            # else:
+            #     self.act_emb = nn.Sequential(
+            #         init_(nn.Linear(action_space.shape[0], hidden_size)), nn.ReLU())
 
             self.cell = OpsCell(num_inputs, act_dim=hidden_size, hidden_size=hidden_size, persistent=persistent, pred_mode=pred_mode)
             self.actor = nn.Sequential(
@@ -307,12 +303,12 @@ class OpsBase(NNBase):
     def forward(self, inputs, rnn_hxs, masks, info=None):
         x = inputs
 
-        if self.gate_input == 'obs':
+        if self.is_leaf:
             if x.ndim > 3:
                 x = x/255
                 x = self.cnn(x)
-                if not self.is_leaf:
-                    x = x.detach()
+                # if not self.is_leaf:
+                #     x = x.detach()
 
         if info is not None and info.numel() > 0: #2
             assert len(info.shape) == 2
@@ -322,22 +318,14 @@ class OpsBase(NNBase):
             if self.discrete_action:
                 # consider embedding all observations and actions before passing to gru...
                 a = self.act_emb(a.squeeze(-1).long())
-            else:
-                a = self.act_emb(a)
 
             x, rnn_hxs = self._forward_gru(x, rnn_hxs, masks, g, a)
 
             hidden_critic = self.critic(x)
             hidden_actor = self.actor(x)
         else: #1
-            assert self.gate_input in ['hid', 'obs'], 'invalid gate input'
-            if self.gate_input == 'hid':
-                hidden_critic = self.critic(rnn_hxs)
-                hidden_actor = self.actor(rnn_hxs)
-            else:
-                hidden_critic = self.critic(x)
-                hidden_actor = self.actor(x)
-
+            hidden_critic = self.critic(rnn_hxs)
+            hidden_actor = self.actor(rnn_hxs)
 
         return self.critic_linear(hidden_critic), hidden_actor, rnn_hxs, x
 

@@ -41,13 +41,13 @@ def main(**kwargs):
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
 
-    log_dir = os.getcwd() + '/data/' + EXP_NAME
+    log_dir = os.getcwd() + '/data/' + kwargs['env_name'] + '/' + str(kwargs['bonus1']) + '-' + str(kwargs['no_bonus']) + '-' + str(kwargs['obs_interval'])
     eval_log_dir = log_dir + "/eval"
     utils.cleanup_log_dir(log_dir)
     utils.cleanup_log_dir(eval_log_dir)
 
     torch.set_num_threads(1)
-    device = torch.device("cuda:2" if kwargs['cuda'] else "cpu")
+    device = torch.device("cuda:6" if kwargs['cuda'] else "cpu")
     async_params = [kwargs['obs_interval'], 1]
 
     envs = make_vec_envs(kwargs['env_name'], kwargs['seed'], kwargs['num_processes'],
@@ -129,6 +129,7 @@ def main(**kwargs):
             return value, action, action_log_prob, recurrent_hidden_states
 
     for j in range(num_updates):
+        start_time = time.time()
 
         if kwargs['use_linear_lr_decay']:
             # decrease learning rate linearly
@@ -221,7 +222,7 @@ def main(**kwargs):
                 value_loss2, action_loss2, dist_entropy2, pred_err2 = update(1,
                     info=torch.cat([action1.float(), rollouts[1].actions[-1]], dim=-1))
 
-        log_dict = {'j': j}
+        log_dict = {'steps': kwargs['num_steps'] * kwargs['num_processes'] * j, 'update_time': time.time() - start_time}
 
         if j % kwargs['log_interval'] == 0 and len(episode_rewards) > 1:
             total_num_steps = (j + 1) * kwargs['num_processes'] * kwargs['num_steps']
@@ -247,6 +248,25 @@ def main(**kwargs):
                 log_dict['action_loss1'] = action_loss1
                 log_dict['dist_entropy1'] = dist_entropy1
 
+        if (j % kwargs['eval_interval'] == 0 or j == num_updates - 1):
+            save_path = log_dir
+            try:
+                os.makedirs(save_path)
+            except OSError:
+                pass
+
+            if len(envs.observation_space.shape) == 3:
+                torch.save([
+                    actor_critic[0],
+                    actor_critic[1],
+                ], os.path.join(save_path, str(j) + ".pt"))
+            else:
+                torch.save([
+                    actor_critic[0],
+                    actor_critic[1],
+                    getattr(utils.get_vec_normalize(envs), 'ob_rms', None)
+                ], os.path.join(save_path, str(j) + ".pt"))
+
         if (kwargs['eval_interval'] is not None and len(episode_rewards) > 1 and j % kwargs['eval_interval'] == 0):
             if len(envs.observation_space.shape) == 3:
                 ob_rms = None
@@ -267,34 +287,37 @@ if __name__ == "__main__":
         # 'env_name': ['CartPole-v1'],
         # 'env_name': ['MiniGrid-Dynamic-Obstacles-5x5-v0', 'MiniGrid-Dynamic-Obstacles-6x6-v0', 'MiniGrid-Dynamic-Obstacles-8x8-v0'],
         # 'env_name': ['MiniGrid-Dynamic-Obstacles-5x5-v0', 'MiniGrid-Dynamic-Obstacles-6x6-v0'],
-        'env_name': ['VizdoomDefendLine-v0'],
+        # 'env_name': ['VizdoomCorridor-v0'],
+        'env_name': ['VizdoomDefendCenter-v0'],
+        # 'env_name': ['CarRacing-v0'],
+
         # 'env_name': ['Hopper-v2', 'Walker2d-v2'],
         # 'env_name': ['Walker2d-v2'],
         'use_gae': [True],
         'lr': [2.5e-4],
         'value_loss_coef': [0.5],
-        'num_processes': [8],
+        'num_processes': [16],
         'num_steps': [512],
         'num_mini_batch': [4],
         'log_interval': [1],
         'use_linear_lr_decay': [True],
-        'entropy_coef': [0],
-        'num_env_steps': [1000000],
+        'entropy_coef': [0.005],
+        'num_env_steps': [50000000],
         'cuda': [True],
-        'proj_name': ['bonus-vizdoom4'],
+        'proj_name': ['async-vizdoom7'],
         'note': [''],
         'hidden_size': [128],
         'bonus1': [0],
         'no_bonus': [0],
-        'ops': [True],
+        'ops': [False],
         'eval_interval': [10],
         'obs_interval': [0],
-        'ppo_epoch': [10],
+        # 'ppo_epoch': [10],
         'gae_lambda': [0.95],
         'use_proper_time_limits': [True],
         # 'save_interval': [10],
         'keep_vis': [True],
-        'persistent': [False],
+        'persistent': [True],
         'pred_loss': [False],
         'scale': [0.25],
         }

@@ -10,7 +10,7 @@ import gym
 import wandb
 import imageio
 
-def to_hist(collected_agent_views, env_name):
+def to_img(collected_agent_views, env_name):
     img_list = []
     for agent_views in collected_agent_views[:4]:
         if env_name.startswith("Vizdoom"):
@@ -53,11 +53,16 @@ def slip_channel(rgb_img, decision, env_name):
     elif env_name.startswith("MiniGrid"):
         indices = np.logical_and(r!=0, np.logical_and(g==0, b==0))
         ratio = r[indices].reshape((-1, 1))
-    elif env_name.startswith("Vizdoom"):
-        indices = np.logical_and(r<50, np.logical_and(g<50, b<50))
-        ratio = 200
-    rgb_img2[indices] = ratio * np.array([0, 0, 1])
-    rgb_img[indices] = ratio * np.array([1, 0, 0])
+    elif env_name.startswith("Vizdoom") or env_name.startswith("CarRacing"):
+        return rgb_img2//2 * decision + rgb_img * (1-decision)
+        # indices = np.logical_and(r<50, np.logical_and(g<50, b<50))
+    #     ratio = 200
+    if env_name.startswith("MiniGrid"):
+        rgb_img2[indices] = ratio * np.array([0, 1, 0])
+        rgb_img[indices] = ratio * np.array([1, 0, 0])
+    else:
+        rgb_img2[indices] = ratio * np.array([0, 0, 1])
+        rgb_img[indices] = ratio * np.array([1, 0, 0])
 
     return rgb_img2 * decision + rgb_img * (1-decision)
 
@@ -69,7 +74,7 @@ def act(actor_critic, obs, recurrent_hidden_states, masks, **kwargs):
         return action, recurrent_hidden_states
 
 def config_env(env_name, obs_shape):
-    keep_hist, hist, labels = False, None, None
+    keep_hist, hist, labels, eval_num = False, None, None, 4
     if env_name in ['CartPole-v1']:
         max_size = 200
         keep_hist = True
@@ -80,13 +85,18 @@ def config_env(env_name, obs_shape):
         max_size = 100
     if env_name == 'CartPole-v1':
         labels = ['position', 'velocity', 'pole-angle', 'pole-angular-velocity']
-    return max_size, keep_hist, hist, labels
+    elif env_name.startswith("MiniGrid"):
+        labels = ["MeanDist", "MinDist", "MaxDist", "Dist"]
+        keep_hist = True
+        eval_num = 8
+        hist = [[[], []] for _ in range(4)]
+    return max_size, keep_hist, hist, labels, eval_num
 
 
 def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
              device, log_dict, async_params=[1, 1], j=0, ops=False, hidden_size=64,
              keep_vis=True, persistent=False, scale=1.):
-    eval_envs = make_vec_envs(env_name, seed + num_processes, num_processes,
+    eval_envs = make_vec_envs(env_name, seed + num_processes + j, num_processes,
                               None, eval_log_dir, device, True,
                               async_params=async_params, keep_vis=keep_vis,
                               scale=scale)
@@ -112,7 +122,7 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
         eval_views, pairs = [[] for _ in range(num_processes)], [[] for _ in range(num_processes)]
         collected_views, collected_pairs = [], []
 
-    max_size, keep_hist, hist, labels = config_env(env_name, obs.shape[-1])
+    max_size, keep_hist, hist, labels, eval_num = config_env(env_name, obs.shape[-1])
     keep_hist = (keep_hist and ops)
 
     if discrete_action:
@@ -123,7 +133,7 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
     start = time.time()
     step = 0
     epi_lengths = []
-    while len(eval_episode_rewards) < 4:
+    while len(eval_episode_rewards) < eval_num:
         if ops:
             decisions, _ = act(actor_critic[0], obs, eval_recurrent_hidden_states, eval_masks)
         else:
@@ -171,16 +181,29 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
                     pairs[idx] = []
                     eval_views[idx] = []
         if keep_hist:
-            for idx in range(obs.shape[0]):
-                scalred_back_obs = obs * np.sqrt(ob_rms.var + 1e-8) + ob_rms.mean
-                if obs.device.type == 'cuda':
-                    capt = list(scalred_back_obs[:, idx][(decisions==0).reshape((-1))].cpu().numpy())
-                    pred = list(scalred_back_obs[:, idx][(decisions==1).reshape((-1))].cpu().numpy())
-                else:
-                    capt = list(scalred_back_obs[:, idx][(decisions==0).reshape((-1))].numpy())
-                    pred = list(scalred_back_obs[:, idx][(decisions==1).reshape((-1))].numpy())
-                hist[idx][0].extend(capt)
-                hist[idx][1].extend(pred)
+            if env_name.startswith("MiniGrid"):
+                for info, dec in zip(infos, decisions):
+                    if dec[0] == 0:
+                        hist[0][0].append(np.mean(info['dist_to_obstacle']))
+                        hist[1][0].append(np.min(info['dist_to_obstacle']))
+                        hist[2][0].append(np.max(info['dist_to_obstacle']))
+                        hist[3][0].extend(info['dist_to_obstacle'])
+                    else:
+                        hist[0][1].append(np.mean(info['dist_to_obstacle']))
+                        hist[1][1].append(np.min(info['dist_to_obstacle']))
+                        hist[2][1].append(np.max(info['dist_to_obstacle']))
+                        hist[3][1].extend(info['dist_to_obstacle'])
+            else:
+                for idx in range(obs.shape[0]):
+                    scalred_back_obs = obs * np.sqrt(ob_rms.var + 1e-8) + ob_rms.mean
+                    if obs.device.type == 'cuda':
+                        capt = list(scalred_back_obs[:, idx][(decisions==0).reshape((-1))].cpu().numpy())
+                        pred = list(scalred_back_obs[:, idx][(decisions==1).reshape((-1))].cpu().numpy())
+                    else:
+                        capt = list(scalred_back_obs[:, idx][(decisions==0).reshape((-1))].numpy())
+                        pred = list(scalred_back_obs[:, idx][(decisions==1).reshape((-1))].numpy())
+                    hist[idx][0].extend(capt)
+                    hist[idx][1].extend(pred)
 
         for info in infos:
             if 'episode' in info.keys():
@@ -195,17 +218,19 @@ def evaluate(actor_critic, ob_rms, env_name, seed, num_processes, eval_log_dir,
 
     eval_envs.close()
     if keep_vis:
-        pairs = to_video(collected_pairs)
-        imgs = to_hist(collected_views, env_name)
+        imgs = to_img(collected_views, env_name)
         log_dict["vis " + str(j)] = wandb.Image(imgs)
-        log_dict["agent_views " + str(j)] = wandb.Video(pairs, fps=4, format="gif")
+        if env_name not in ['CarRacing-v0']:
+            pairs = to_video(collected_pairs)
+            log_dict["agent_views " + str(j)] = wandb.Video(pairs, fps=4, format="gif")
     if keep_hist:
         import matplotlib.pyplot as plt
         for (idx, label) in enumerate(labels):
             file_name = eval_log_dir + label + ".jpg"
             capt, pred = hist[idx]
             fig, (ax1, ax2) = plt.subplots(nrows=2)
-            ns, bins, patches = ax1.hist([capt, pred], normed=False,
+            ns, bins, patches = ax1.hist([capt, pred],
+                                  # normed=False,
                                   bins=10,
                                   alpha=0.7,
                                   label=['obs', 'pred'],

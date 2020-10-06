@@ -19,6 +19,18 @@ class MinigridWrapper(gym.core.ObservationWrapper):
         obs = obs['image']
         return obs
 
+class DynamicObsWrapper(gym.Wrapper):
+    def __init__(self, env):
+        gym.Wrapper.__init__(self, env)
+        self.env = env
+
+    def step(self, act):
+        obs, reward, done, info = self.env.step(act)
+        dist_to_obstacle = []
+        for i in range(len(self.env.obstacles)):
+            dist_to_obstacle.append(((self.env.agent_pos - self.env.obstacles[i].cur_pos)**2).sum())
+        info['dist_to_obstacle'] = dist_to_obstacle
+        return obs, reward, done, info
 
 class ResizeObservation(ObservationWrapper):
     r"""Downsample the image observation to a square image. """
@@ -61,16 +73,15 @@ class AsyncWrapper(gym.Wrapper):
         self.keep_vis = keep_vis
 
     def get_vis(self, obs):
-        if len(obs.shape) == 3:
-            return obs.copy()
-
-        elif self.env_id.startswith("MiniGrid"):
+        if self.env_id.startswith("MiniGrid"):
             rgb_img = self.unwrapped.render(
                         mode='rgb_array',
-                        highlight=False,
-                        tile_size=8
+                        highlight=True,
+                        tile_size=16
                     ).copy()
             return rgb_img
+        elif len(obs.shape) == 3:
+            return obs.copy()
         else:
             return self.render(mode='rgb_array').copy()
 

@@ -1,6 +1,11 @@
 from gym_minigrid.minigrid import *
 from gym_minigrid.register import register
 from operator import add
+from pdb import set_trace as st
+
+def manhattan_distance(pos1, pos2):
+    # assume they are tuples
+    return np.sum(np.abs(pos1[0] - pos2[0]) + np.abs(pos1[1] - pos2[1]))
 
 class DynamicObstaclesEnv(MiniGridEnv):
     """
@@ -32,8 +37,38 @@ class DynamicObstaclesEnv(MiniGridEnv):
         self.action_space = spaces.Discrete(self.actions.forward + 1)
         self.reward_range = (-1, 1)
 
+    def reset(self):
+        # Current position and direction of the agent
+        self.agent_pos = None
+        self.agent_dir = None
+
+        # Generate a new random grid at the start of each episode
+        # To keep the same grid for each episode, call env.seed() with
+        # the same seed before calling env.reset()
+        self._gen_grid(self.width, self.height)
+
+        # These fields should be defined by _gen_grid
+        assert self.agent_pos is not None
+        assert self.agent_dir is not None
+
+        # Check that the agent doesn't overlap with an object
+        start_cell = self.grid.get(*self.agent_pos)
+        assert start_cell is None or start_cell.can_overlap()
+
+        # Item picked up, being carried, initially nothing
+        self.carrying = None
+
+        # Step count since episode start
+        self.step_count = 0
+
+        # Return first observation
+        obs = self.gen_obs()
+        self.last_dist = self.dist_to_goal()
+        return obs
+
     def _gen_grid(self, width, height):
         # Create an empty grid
+        self.width, self.height = width, height
         self.grid = Grid(width, height)
 
         # Generate the surrounding walls
@@ -85,7 +120,19 @@ class DynamicObstaclesEnv(MiniGridEnv):
             except:
                 pass
 
+        dist = self.dist_to_goal()
+        delta_dist = self.last_dist - dist
+        reward += delta_dist
+        self.last_dist = dist
+        if done:
+            reward += 5
+
         return obs, reward, done, info
+
+    def dist_to_goal(self):
+        goal_pos = np.array((self.width - 2, self.height - 2))
+        dist = manhattan_distance(self.agent_pos, goal_pos)
+        return dist
 
 class DynamicObstaclesEnv5x5(DynamicObstaclesEnv):
     def __init__(self):

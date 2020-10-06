@@ -36,7 +36,7 @@ except ImportError:
 
 
 def make_env(env_id, seed, rank, log_dir, allow_early_resets,
-             async_params=[1, 1], scale=1, keep_vis=False):
+             async_params=[0, 0], scale=1, keep_vis=False):
     def _thunk():
         if env_id.startswith("dm"):
             _, domain, task = env_id.split('.')
@@ -47,6 +47,8 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets,
             env = gym.make(env_id)
             env = MinigridWrapper(env)
             env = FlattenObservation(env)
+            if env_id.startswith("MiniGrid-Dynamic-Obstacles"):
+                env = DynamicObsWrapper(env)
         else:
             env = gym.make(env_id)
 
@@ -72,7 +74,7 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets,
         if is_atari:
             if len(env.observation_space.shape) == 3:
                 env = wrap_deepmind(env)
-        elif env_id.startswith("Vizdoom"):
+        elif env_id.startswith("Vizdoom") or env_id.startswith("CarRacing"):
             env = ResizeObservation(env, prop=scale)
         elif len(env.observation_space.shape) == 3:
             raise NotImplementedError(
@@ -101,7 +103,7 @@ def make_vec_envs(env_name,
                   device,
                   allow_early_resets,
                   num_frame_stack=None,
-                  async_params=[1, 1],
+                  async_params=[0, 0],
                   scale=1.,
                   keep_vis=False):
     envs = [

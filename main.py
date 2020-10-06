@@ -24,43 +24,38 @@ from experiment_utils.run_sweep import run_sweep
 from evaluation import evaluate
 
 EXP_NAME = 'async/debug-histogram'
-# python main.py --obs-interval 2 --ops --seed 222
+# python main.py --obs-interval 0 --ops --seed 222
 def main():
     args = get_args()
 
     kwargs = {
         'algo': 'ppo',
-        'env_name': 'CartPole-v1',
         'use_gae': True,
-        'lr': 3e-4,
+        'lr': 2.5e-4,
         'value_loss_coef': 0.5,
-        'num_processes': 4,
-        'num_steps': 2048,
-        'num_mini_batch': 2,
+        'num_processes': 8,
+        'num_steps': 512,
+        'num_mini_batch': 4,
         'log_interval': 1,
         'use_linear_lr_decay': True,
-        'entropy_coef': 0,
-        'num_env_steps': 10000000,
+        'entropy_coef': 0.01,
+        'num_env_steps': 2000000,
         'cuda': False,
-        'proj_name': 'hist',
+        'proj_name': 'bonus-dynamic',
         'note': '',
         'hidden_size': 64,
-        'bonus1': 0,
-        'no_bonus': 0,
-        'eval_interval': 1,
-        'ppo_epoch': 10,
+        'eval_interval': 20,
         'gae_lambda': 0.95,
         'use_proper_time_limits': True,
-        'keep_vis': False,
-        'persistent': False,
+        'keep_vis': True,
+        'persistent': True,
         'pred_loss': False,
+        'scale': 1,
         }
 
     for arg in vars(args):
         if arg not in kwargs:
             kwargs[arg] = getattr(args, arg)
-
-
 
     torch.manual_seed(kwargs['seed'])
     torch.cuda.manual_seed_all(kwargs['seed'])
@@ -77,12 +72,12 @@ def main():
     utils.cleanup_log_dir(eval_log_dir)
 
     torch.set_num_threads(1)
-    device = torch.device("cuda:6" if kwargs['cuda'] else "cpu")
+    device = torch.device("cuda:2" if kwargs['cuda'] else "cpu")
     async_params = [kwargs['obs_interval'], 1]
 
     envs = make_vec_envs(kwargs['env_name'], kwargs['seed'], kwargs['num_processes'],
                          kwargs['gamma'], kwargs['log_dir'], device, False,
-                         async_params=async_params)
+                         async_params=async_params, scale=kwargs['scale'])
     discrete_action = envs.action_space.__class__.__name__ == "Discrete"
 
     def make_agent(is_leaf=True):
@@ -96,20 +91,19 @@ def main():
                 recurrent=True,
                 gate_input='obs' if is_leaf else 'hid',
                 hidden_size=kwargs['hidden_size'],
-                persistent=False),
+                persistent=kwargs['persistent']),
                 )
 
-        if kwargs['algo'] == 'ppo':
-            agent = algo.PPO(
-                actor_critic,
-                kwargs['clip_param'],
-                kwargs['ppo_epoch'],
-                kwargs['num_mini_batch'],
-                kwargs['value_loss_coef'],
-                kwargs['entropy_coef'],
-                lr=kwargs['lr'],
-                eps=kwargs['eps'],
-                max_grad_norm=kwargs['max_grad_norm'])
+        agent = algo.PPO(
+            actor_critic,
+            kwargs['clip_param'],
+            kwargs['ppo_epoch'],
+            kwargs['num_mini_batch'],
+            kwargs['value_loss_coef'],
+            kwargs['entropy_coef'],
+            lr=kwargs['lr'],
+            eps=kwargs['eps'],
+            max_grad_norm=kwargs['max_grad_norm'])
 
         if discrete_action:
             action_dim = 1
@@ -285,7 +279,8 @@ def main():
                 ob_rms = utils.get_vec_normalize(envs).ob_rms
             evaluate(actor_critic, ob_rms, kwargs['env_name'], kwargs['seed'],
                      kwargs['num_processes'], eval_log_dir, device, log_dict, async_params, j=j, ops=kwargs['ops'],
-                     hidden_size=kwargs['hidden_size'], keep_vis=kwargs['keep_vis'])
+                     hidden_size=kwargs['hidden_size'], keep_vis=kwargs['keep_vis'], persistent=kwargs['persistent'],
+                     scale=kwargs['scale'])
 
         wandb.log(log_dict)
 
