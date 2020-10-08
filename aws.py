@@ -68,6 +68,7 @@ def main(**kwargs):
                 hidden_size=kwargs['hidden_size'],
                 persistent=kwargs['persistent']),
                 )
+        lr = kwargs['lr'][1] if is_leaf else kwargs['lr'][0]
 
         agent = algo.PPO(
             actor_critic,
@@ -76,7 +77,7 @@ def main(**kwargs):
             kwargs['num_mini_batch'],
             kwargs['value_loss_coef'],
             kwargs['entropy_coef'],
-            lr=kwargs['lr'],
+            lr=lr,
             eps=kwargs['eps'],
             max_grad_norm=kwargs['max_grad_norm'])
 
@@ -286,17 +287,17 @@ if __name__ == "__main__":
 
         # 'env_name': ['CartPole-v1'],
         # 'env_name': ['MiniGrid-Dynamic-Obstacles-5x5-v0', 'MiniGrid-Dynamic-Obstacles-6x6-v0', 'MiniGrid-Dynamic-Obstacles-8x8-v0'],
-        # 'env_name': ['MiniGrid-Dynamic-Obstacles-5x5-v0', 'MiniGrid-Dynamic-Obstacles-6x6-v0'],
+        'env_name': ['MiniGrid-Dynamic-Obstacles-5x5-v0'],
         # 'env_name': ['VizdoomCorridor-v0'],
-        'env_name': ['VizdoomDefendCenter-v0'],
+        # 'env_name': ['VizdoomDefendCenter-v0'],
         # 'env_name': ['CarRacing-v0'],
 
         # 'env_name': ['Hopper-v2', 'Walker2d-v2'],
         # 'env_name': ['Walker2d-v2'],
         'use_gae': [True],
-        'lr': [2.5e-4],
+        'lr': [[0.5e-4, 2.5e-4]],
         'value_loss_coef': [0.5],
-        'num_processes': [16],
+        'num_processes': [8],
         'num_steps': [512],
         'num_mini_batch': [4],
         'log_interval': [1],
@@ -304,14 +305,14 @@ if __name__ == "__main__":
         'entropy_coef': [0.005],
         'num_env_steps': [50000000],
         'cuda': [True],
-        'proj_name': ['async-vizdoom7'],
+        'proj_name': ['wrap-dynamic'],
         'note': [''],
         'hidden_size': [128],
         'bonus1': [0],
         'no_bonus': [0],
-        'ops': [False],
-        'eval_interval': [10],
-        'obs_interval': [0],
+        'ops': [True],
+        'eval_interval': [20],
+        'obs_interval': [10],
         # 'ppo_epoch': [10],
         'gae_lambda': [0.95],
         'use_proper_time_limits': [True],

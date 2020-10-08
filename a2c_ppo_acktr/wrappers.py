@@ -77,7 +77,7 @@ class AsyncWrapper(gym.Wrapper):
             rgb_img = self.unwrapped.render(
                         mode='rgb_array',
                         highlight=True,
-                        tile_size=16
+                        tile_size=16,
                     ).copy()
             return rgb_img
         elif len(obs.shape) == 3:
